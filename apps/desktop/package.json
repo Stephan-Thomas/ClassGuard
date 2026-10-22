@@ -1,0 +1,60 @@
+{
+  "name": "@classguard/desktop",
+  "version": "1.0.0",
+  "description": "ClassGuard Desktop Application for Attendance Tracking and Facial Verification",
+  "type": "module",
+  "private": true,
+  "author": "ClassGuard Team",
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "dev:web": "vite",
+    "build:electron": "tsc -p tsconfig.node.json",
+    "dev": "npm run build:electron && concurrently -k -s first \"npm run dev:web\" \"electron .\"",
+    "dev:electron": "npm run build:electron && concurrently -k -s first \"npm run dev:web\" \"electron .\"",
+    "build": "tsc && vite build && tsc -p tsconfig.node.json",
+    "preview": "vite preview",
+    "package:win": "npm run build && electron-builder --win --dir"
+  },
+  "dependencies": {
+    "@classguard/shared": "*",
+    "@vladmandic/face-api": "^1.7.15",
+    "jsqr": "^1.4.0",
+    "lucide-react": "^0.428.0",
+    "qrcode": "^1.5.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.1",
+    "recharts": "^2.12.7",
+    "sql.js": "^1.15.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^20.14.14",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1"
+  },
+  "build": {
+    "appId": "edu.classguard.attendance",
+    "productName": "ClassGuard",
+    "electronVersion": "31.3.1",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": "dir",
+      "signAndEditExecutable": false
+    }
+  }
+}

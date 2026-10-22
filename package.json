@@ -1,0 +1,35 @@
+{
+  "name": "classguard-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop-Based Student Attendance Tracking and Monitoring System Using QR Code and Facial Verification",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@classguard/desktop",
+    "dev:web": "npm run dev:web --workspace=@classguard/desktop",
+    "dev:api": "npm run dev --workspace=@classguard/api",
+    "dev:all": "concurrently -k \"npm run dev:api\" \"npm run dev\"",
+    "build": "npm run build --workspaces",
+    "test": "vitest run",
+    "seed": "tsx database/seed/seed.ts",
+    "package:win": "npm run package:win --workspace=@classguard/desktop"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "keywords": [
+    "attendance",
+    "electron",
+    "facial-verification",
+    "qr-code",
+    "offline-first"
+  ],
+  "author": "ClassGuard Team",
+  "license": "MIT"
+}
