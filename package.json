@@ -8,6 +8,9 @@
     "apps/*"
   ],
   "scripts": {
+    "build:shared": "npm run build --workspace=@classguard/shared",
+    "predev": "npm run build:shared",
+    "preseed": "npm run build:shared",
     "dev": "npm run dev --workspace=@classguard/desktop",
     "dev:web": "npm run dev:web --workspace=@classguard/desktop",
     "dev:api": "npm run dev --workspace=@classguard/api",

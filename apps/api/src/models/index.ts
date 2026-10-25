@@ -1,10 +1,11 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
+import { UserRole } from '@classguard/shared';
 
 export interface IUserDoc extends Document {
   username: string;
   email: string;
   passwordHash: string;
-  role: 'ADMIN' | 'LECTURER';
+  role: UserRole;
   fullName: string;
   active: boolean;
   createdAt: Date;
@@ -16,7 +17,7 @@ const UserSchema = new Schema<IUserDoc>(
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, required: true, enum: ['ADMIN', 'LECTURER'] },
+    role: { type: String, required: true, enum: ['STUDENT', 'ADMIN', 'SUPERADMIN'] },
     fullName: { type: String, required: true, trim: true },
     active: { type: Boolean, default: true },
   },
@@ -191,7 +192,7 @@ const AttendanceRecordSchema = new Schema<IAttendanceRecordDoc>(
     sessionId: { type: Schema.Types.ObjectId as any, ref: 'AttendanceSession', required: true },
     timestamp: { type: Date, required: true },
     status: { type: String, required: true, enum: ['PRESENT', 'LATE', 'EXCUSED'] },
-    verificationMethod: { type: String, required: true, enum: ['QR_AND_FACE', 'MANUAL_OVERRIDE', 'TEST_SIMULATION'] },
+    verificationMethod: { type: String, required: true, enum: ['FACE_VERIFIED', 'QR_FALLBACK', 'MANUAL_OVERRIDE', 'QR_AND_FACE', 'TEST_SIMULATION'] },
     similarityScore: { type: Number },
     livenessPassed: { type: Boolean, default: true },
     kioskId: { type: String },

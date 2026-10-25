@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK(role IN ('ADMIN', 'LECTURER')),
+  role TEXT NOT NULL CHECK(role IN ('STUDENT', 'ADMIN', 'SUPERADMIN')),
   full_name TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,

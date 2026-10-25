@@ -83,19 +83,17 @@ export function verifyFace1to1(
   const distance = euclideanDistance(capturedEmbedding, enrolledEmbedding);
   const cosSim = cosineSimilarity(capturedEmbedding, enrolledEmbedding);
 
-  // Convert Euclidean distance to a friendly 0-100% confidence score
-  // Distance 0.0 -> 100%, Distance 0.5 -> 60%, Distance >= 1.0 -> 0%
-  const confidenceScore = Math.max(0, Math.min(100, Math.round((1 - distance / 1.0) * 100)));
-
   const matched = distance <= customThreshold;
+  // Express similarity metric based on normalized distance
+  const distanceMetric = Number(distance.toFixed(4));
 
   return {
     success: matched,
-    similarityScore: confidenceScore,
+    similarityScore: distanceMetric,
     threshold: customThreshold,
     message: matched
-      ? `Facial verification succeeded (distance: ${distance.toFixed(3)} <= ${customThreshold}, confidence: ${confidenceScore}%)`
-      : `Facial verification failed (distance: ${distance.toFixed(3)} > ${customThreshold}, confidence: ${confidenceScore}%)`,
+      ? `Facial verification succeeded (Euclidean distance: ${distance.toFixed(3)} <= threshold: ${customThreshold})`
+      : `Facial verification failed (Euclidean distance: ${distance.toFixed(3)} > threshold: ${customThreshold})`,
     details: {
       euclideanDistance: distance,
       cosineSimilarity: cosSim,

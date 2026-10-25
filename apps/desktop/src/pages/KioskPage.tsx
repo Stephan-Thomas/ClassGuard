@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import jsQR from 'jsqr';
 import { api } from '../lib/api-client';
 import { FaceRecognitionService } from '../lib/face-service';
-import { Student } from '@classguard/shared';
+import { Student, AttendanceSession, isValidMatricNumber } from '@classguard/shared';
 import {
   Tv,
   QrCode,
@@ -11,79 +11,119 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  RefreshCw,
-  LogOut,
-  Sparkles,
-  ShieldAlert,
   ArrowRight,
-  UserCheck,
   Clock,
-  Scan,
-  HelpCircle,
+  ShieldCheck,
+  RefreshCw,
+  Loader2,
+  ArrowLeft,
+  X,
 } from 'lucide-react';
 
-type KioskStep = 'MATRIC' | 'VERIFY_FACE' | 'QR_FALLBACK' | 'RESULT';
+type KioskStep = 'WAITING_SESSION' | 'ENTER_MATRIC' | 'VERIFY_FACE' | 'QR_FALLBACK' | 'RESULT';
 
 export const KioskPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [step, setStep] = useState<KioskStep>('MATRIC');
+  const [step, setStep] = useState<KioskStep>('WAITING_SESSION');
+  const [activeSession, setActiveSession] = useState<AttendanceSession | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+
+  // Student & Verification State
   const [matricNumber, setMatricNumber] = useState('');
+  const [matricError, setMatricError] = useState<string | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
-  const [activeSession, setActiveSession] = useState<any | null>(null);
-
-  // Verification state & attempt counting
-  const [faceAttemptCount, setFaceAttemptCount] = useState(0);
-  const [qrAttemptCount, setQrAttemptCount] = useState(0);
+  const [faceAttempts, setFaceAttempts] = useState(0);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [faceErrorMessage, setFaceErrorMessage] = useState<string | null>(null);
+  const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
   // Result state
   const [resultSuccess, setResultSuccess] = useState(false);
   const [resultMessage, setResultMessage] = useState('');
-  const [resultStatus, setResultStatus] = useState<'PRESENT' | 'LATE' | 'EXCUSED' | null>(null);
+  const [attendanceStatus, setAttendanceStatus] = useState<'PRESENT' | 'LATE' | 'EXCUSED' | null>(null);
   const [verificationMethod, setVerificationMethod] = useState<string | null>(null);
-  const [similarityScore, setSimilarityScore] = useState<number | null>(null);
   const [countdown, setCountdown] = useState(5);
 
-  // Camera & Video
+  // Camera references
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const scanIntervalRef = useRef<number | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const qrScanTimerRef = useRef<number | null>(null);
 
   // Clock
-  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+  const [clock, setClock] = useState(new Date().toLocaleTimeString());
 
-  // Demo Students list for rapid testing
-  const [demoStudents, setDemoStudents] = useState<Student[]>([]);
-
+  // 1. Resolve and validate active session from URL param or lecturer console
   useEffect(() => {
-    const clockTimer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString());
+    const clockInterval = setInterval(() => {
+      setClock(new Date().toLocaleTimeString());
     }, 1000);
 
-    // Load active session & demo students
-    api.getSessions().then((res) => {
-      if (res.success && res.data.length > 0) {
-        const active = res.data.find((s: any) => s.status === 'ACTIVE') || res.data[0];
-        setActiveSession(active);
+    const resolveSession = async () => {
+      setSessionLoading(true);
+      try {
+        const queryParams = new URLSearchParams(location.search);
+        const querySessionId = queryParams.get('session');
+
+        const res = await api.getSessions();
+        if (res.success && res.data) {
+          let matched: AttendanceSession | null = null;
+          if (querySessionId) {
+            matched = res.data.find((s) => s.id === querySessionId && s.status === 'ACTIVE') || null;
+          }
+          if (!matched) {
+            // Find any currently ACTIVE session
+            matched = res.data.find((s) => s.status === 'ACTIVE') || null;
+          }
+
+          if (matched) {
+            setActiveSession(matched);
+            setStep('ENTER_MATRIC');
+          } else {
+            setActiveSession(null);
+            setStep('WAITING_SESSION');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve active session:', err);
+        setStep('WAITING_SESSION');
+      } finally {
+        setSessionLoading(false);
       }
-    });
+    };
 
-    api.getStudents().then((res) => {
-      if (res.success) setDemoStudents(res.data.slice(0, 6));
-    });
+    resolveSession();
 
-    return () => clearInterval(clockTimer);
-  }, []);
+    return () => {
+      clearInterval(clockInterval);
+      stopCamera();
+    };
+  }, [location.search]);
 
-  // Cleanup camera stream
+  // Privacy reset countdown on result screen
+  useEffect(() => {
+    if (step === 'RESULT') {
+      setCountdown(5);
+      const timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            resetKioskForNextStudent();
+            return 5;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [step]);
+
   const stopCamera = () => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
+    if (qrScanTimerRef.current) {
+      clearInterval(qrScanTimerRef.current);
+      qrScanTimerRef.current = null;
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -94,115 +134,168 @@ export const KioskPage: React.FC = () => {
   const startCamera = async (onFrame?: () => void) => {
     try {
       stopCamera();
-      setCameraError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' },
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
       }
       if (onFrame) {
-        scanIntervalRef.current = window.setInterval(onFrame, 150);
+        qrScanTimerRef.current = window.setInterval(onFrame, 200);
       }
     } catch (err: any) {
-      setCameraError('Webcam is not available or blocked. You can use biometric simulation.');
+      setVerificationFeedback('Webcam access was denied or hardware not found.');
     }
   };
 
-  // Step 1: Matriculation submission -> Goes directly to Face Verification!
-  const handleMatricSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!matricNumber.trim()) return;
+  const resetKioskForNextStudent = () => {
+    stopCamera();
+    setMatricNumber('');
+    setMatricError(null);
+    setStudent(null);
+    setFaceAttempts(0);
+    setIsVerifying(false);
+    setVerificationFeedback(null);
+    setResultSuccess(false);
+    setResultMessage('');
+    setAttendanceStatus(null);
+    setVerificationMethod(null);
+    setStep(activeSession ? 'ENTER_MATRIC' : 'WAITING_SESSION');
+  };
 
-    const matric = matricNumber.trim().toUpperCase();
-    const res = await api.getStudent(matric);
-    if (res.success && res.data) {
-      const stu = res.data;
-      setStudent(stu);
-      setFaceAttemptCount(0);
-      setQrAttemptCount(0);
-      setFaceErrorMessage(null);
+  // Step 1: Matriculation Number Submission
+  const handleMatricSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanMatric = matricNumber.trim().toUpperCase();
 
-      // Check if student has face enrolled
-      if (!stu.hasFaceEnrolled) {
-        setFaceErrorMessage(`Student ${stu.fullName} has no biometric face template enrolled.`);
+    if (!cleanMatric) {
+      setMatricError('Please enter your matriculation number.');
+      return;
+    }
+
+    if (!isValidMatricNumber(cleanMatric)) {
+      setMatricError('Invalid format. Must match 2xxx/2xxxxx (e.g. 2022/241414)');
+      return;
+    }
+
+    setMatricError(null);
+    setIsVerifying(true);
+
+    try {
+      const res = await api.getStudent(cleanMatric);
+      if (res.success && res.data) {
+        const stu = res.data;
+        setStudent(stu);
+        setFaceAttempts(0);
+        setVerificationFeedback(null);
+
+        // Check course enrollment
+        if (activeSession) {
+          const enrollments = await api.getCourseEnrollments(activeSession.courseId);
+          if (enrollments.success && enrollments.data) {
+            const isEnrolled = enrollments.data.some((e: any) => e.studentId === stu.id);
+            if (!isEnrolled) {
+              setResultSuccess(false);
+              setResultMessage(`Student ${stu.fullName} is not enrolled in course ${activeSession.courseCode || 'this course'}.`);
+              setStep('RESULT');
+              setIsVerifying(false);
+              return;
+            }
+          }
+        }
+
+        // If student has no facial biometrics enrolled, direct immediately to QR fallback
+        if (!stu.hasFaceEnrolled) {
+          setVerificationFeedback(
+            `Notice: No facial biometric template is enrolled for ${stu.fullName}. Please present your student QR credential card.`
+          );
+          setStep('QR_FALLBACK');
+          startCamera(scanQrCodeFrame);
+          setIsVerifying(false);
+          return;
+        }
+
+        // PRIMARY WORKFLOW: Proceed to Facial Verification
         setStep('VERIFY_FACE');
         startCamera();
+      } else {
+        setMatricError(`Student with matriculation number "${cleanMatric}" was not found.`);
+      }
+    } catch (err: any) {
+      setMatricError(err.message || 'Error looking up student record.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  // Step 2: PRIMARY METHOD - Real Facial Verification
+  const handlePerformFacialVerification = async () => {
+    if (!student || !activeSession || !videoRef.current) return;
+    setIsVerifying(true);
+    setVerificationFeedback('Extracting facial representation using local neural network...');
+
+    try {
+      const faceService = FaceRecognitionService.getInstance();
+      const faceResult = await faceService.extractFaceEmbedding(videoRef.current);
+
+      if (!faceResult.success || !faceResult.embedding) {
+        setIsVerifying(false);
+        const newAttempts = faceAttempts + 1;
+        setFaceAttempts(newAttempts);
+        setVerificationFeedback(faceResult.message || 'No clear face detected in frame.');
         return;
       }
 
-      // PRIMARY ACTION: Proceed immediately to Facial Verification
-      setStep('VERIFY_FACE');
-      startCamera();
-    } else {
-      setResultMessage(`No student record found for matriculation number "${matric}". Please verify your number with the academic administrator.`);
-      setResultSuccess(false);
-      setStep('RESULT');
-    }
-  };
+      // Send actual 128D descriptor to authoritative verification service
+      const res = await api.verifyFaceAndRecord({
+        matricNumber: student.matricNumber,
+        sessionId: activeSession.id,
+        courseId: activeSession.courseId,
+        capturedEmbedding: faceResult.embedding,
+        kioskId: 'KIOSK-STATION-01',
+      });
 
-  // Step 2: PRIMARY METHOD - Facial Verification
-  const handlePerformFacialVerification = async (useSimulated = false) => {
-    if (!student) return;
-    setIsVerifying(true);
-    setFaceErrorMessage(null);
+      setIsVerifying(false);
 
-    let capturedEmbedding: number[] | undefined = undefined;
+      if (res.success) {
+        // SUCCESS: Attendance recorded immediately! No QR scan needed!
+        stopCamera();
+        setResultSuccess(true);
+        setResultMessage(res.message);
+        setAttendanceStatus(res.attendanceStatus || 'PRESENT');
+        setVerificationMethod('FACE_VERIFIED');
+        setStep('RESULT');
+      } else {
+        const newAttempts = faceAttempts + 1;
+        setFaceAttempts(newAttempts);
+        setVerificationFeedback(res.message);
 
-    if (!useSimulated && videoRef.current) {
-      try {
-        const faceService = FaceRecognitionService.getInstance();
-        const faceResult = await faceService.extractFaceEmbedding(videoRef.current);
-        if (faceResult && faceResult.embedding) {
-          capturedEmbedding = faceResult.embedding;
+        // If duplicate record
+        if (res.statusCode === 'ALREADY_MARKED') {
+          stopCamera();
+          setResultSuccess(false);
+          setResultMessage(res.message);
+          setStep('RESULT');
         }
-      } catch (err) {
-        console.warn('Live facial feature extraction warning:', err);
       }
-    }
-
-    const payload = {
-      matricNumber: student.matricNumber,
-      sessionId: activeSession?.id,
-      courseId: activeSession?.courseId,
-      capturedEmbedding,
-      testSimulatedMatch: useSimulated,
-      kioskId: 'KIOSK-01',
-    };
-
-    const res = await api.verifyFaceAndRecord(payload);
-    setIsVerifying(false);
-
-    if (res.success) {
-      // SUCCESS! Mark attendance immediately. DO NOT require QR scan!
-      stopCamera();
-      setResultSuccess(true);
-      setResultMessage(res.message);
-      setResultStatus(res.attendanceStatus || 'PRESENT');
-      setVerificationMethod('FACE_VERIFIED');
-      setSimilarityScore(res.similarityScore || 96);
-      setStep('RESULT');
-    } else {
-      // Face Verification failed
-      const newAttempts = faceAttemptCount + 1;
-      setFaceAttemptCount(newAttempts);
-      setFaceErrorMessage(res.message);
+    } catch (err: any) {
+      setIsVerifying(false);
+      setVerificationFeedback(`Face verification error: ${err.message}`);
     }
   };
 
-  // Step 3: Switch to FALLBACK - Student QR Credential
+  // Switch to Fallback Method: Student QR Credential
   const handleSwitchToQrFallback = () => {
-    setFaceErrorMessage(null);
+    setVerificationFeedback(null);
     setStep('QR_FALLBACK');
-    // Start camera in QR scanning mode
-    startCamera(scanQrCredentialFrame);
+    startCamera(scanQrCodeFrame);
   };
 
-  // Real-time QR Code scanning via jsQR for Student QR Card
-  const scanQrCredentialFrame = () => {
-    if (!videoRef.current || !canvasRef.current || videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
+  // Step 3: QR Fallback Frame Scanner (using jsQR)
+  const scanQrCodeFrame = () => {
+    if (!videoRef.current || !canvasRef.current || videoRef.current.readyState < 2) {
       return;
     }
     const canvas = canvasRef.current;
@@ -213,513 +306,368 @@ export const KioskPage: React.FC = () => {
     canvas.height = videoRef.current.videoHeight;
     ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imgData.data, imgData.width, imgData.height, {
       inversionAttempts: 'dontInvert',
     });
 
     if (code && code.data) {
       stopCamera();
-      processQrFallbackCredential(code.data);
+      processQrFallback(code.data);
     }
   };
 
-  // Process Student QR Fallback Credential
-  const processQrFallbackCredential = async (qrString: string) => {
-    if (!student) return;
+  const processQrFallback = async (qrString: string) => {
+    if (!student || !activeSession) return;
     setIsVerifying(true);
+    setVerificationFeedback('Validating student QR credential signature...');
 
-    const payload = {
-      studentQrCredentialString: qrString,
-      matricNumber: student.matricNumber,
-      sessionId: activeSession?.id,
-      courseId: activeSession?.courseId,
-      kioskId: 'KIOSK-01',
-    };
+    try {
+      const res = await api.verifyQrFallbackAndRecord({
+        studentQrCredentialString: qrString,
+        matricNumber: student.matricNumber,
+        sessionId: activeSession.id,
+        courseId: activeSession.courseId,
+        kioskId: 'KIOSK-STATION-01',
+      });
 
-    const res = await api.verifyQrFallbackAndRecord(payload);
-    setIsVerifying(false);
+      setIsVerifying(false);
 
-    if (res.success) {
-      stopCamera();
-      setResultSuccess(true);
-      setResultMessage(res.message);
-      setResultStatus(res.attendanceStatus || 'PRESENT');
-      setVerificationMethod('QR_FALLBACK');
-      setStep('RESULT');
-    } else {
-      const newCount = qrAttemptCount + 1;
-      setQrAttemptCount(newCount);
-      setResultMessage(res.message || 'Student QR credential was invalid or rejected.');
-      if (newCount >= 2) {
-        stopCamera();
+      if (res.success) {
+        setResultSuccess(true);
+        setResultMessage(res.message);
+        setAttendanceStatus(res.attendanceStatus || 'PRESENT');
+        setVerificationMethod('QR_FALLBACK');
+        setStep('RESULT');
+      } else {
         setResultSuccess(false);
+        setResultMessage(
+          `${res.message} If both facial verification and QR fallback fail, please notify your lecturer for manual attendance override.`
+        );
         setStep('RESULT');
       }
+    } catch (err: any) {
+      setIsVerifying(false);
+      setResultSuccess(false);
+      setResultMessage(`QR processing failed: ${err.message}`);
+      setStep('RESULT');
     }
   };
 
-  // Simulation helper for QR fallback testing on a single PC
-  const handleSimulateStudentQrCredential = async () => {
-    if (!student) return;
-    let cred = student.qrCredential;
-    if (!cred) {
-      // Generate one on the fly for demonstration
-      const genRes = await api.generateQrCredential(student.id);
-      if (genRes.success && genRes.qrCredential) {
-        cred = genRes.qrCredential;
-      }
-    }
-
-    if (cred) {
-      processQrFallbackCredential(cred);
-    } else {
-      alert('Could not retrieve student QR credential.');
-    }
-  };
-
-  // Auto-reset timer on RESULT step
-  useEffect(() => {
-    if (step === 'RESULT') {
-      setCountdown(5);
-      const timer = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            handleResetKiosk();
-            return 5;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timer);
-    }
-  }, [step]);
-
-  // Clean reset for next student
-  const handleResetKiosk = () => {
+  // Return to lecturer console
+  const handleExitKiosk = () => {
     stopCamera();
-    setStep('MATRIC');
-    setMatricNumber('');
-    setStudent(null);
-    setFaceAttemptCount(0);
-    setQrAttemptCount(0);
-    setFaceErrorMessage(null);
-    setResultSuccess(false);
-    setResultMessage('');
-    setResultStatus(null);
-    setVerificationMethod(null);
-    setSimilarityScore(null);
+    navigate('/dashboard');
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#07090e] text-zinc-100 flex flex-col justify-between p-6 select-none overflow-hidden font-sans">
-      {/* Kiosk Top Bar */}
-      <header className="flex items-center justify-between pb-4 border-b border-zinc-800/80">
+    <div className="min-h-screen w-screen flex flex-col bg-zinc-950 text-zinc-100 select-none overflow-hidden relative">
+      <canvas ref={canvasRef} className="hidden" />
+
+      {/* Top Kiosk Header */}
+      <header className="h-16 px-6 border-b border-zinc-800 bg-zinc-900/60 backdrop-blur-md flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <Tv className="w-5 h-5 text-zinc-950 font-bold" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shadow-md shadow-emerald-500/20">
+            <ShieldCheck className="w-5 h-5 text-zinc-950 font-bold" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-base tracking-tight text-zinc-100">
+              <span className="font-bold tracking-tight text-sm text-zinc-100">
                 Class<span className="text-emerald-400">Guard</span>
               </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                ATTENDANCE KIOSK
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400">
-                FACE FIRST → QR FALLBACK
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                Attendance Kiosk
               </span>
             </div>
-            <p className="text-xs text-zinc-400 font-mono">
-              Active Course: <span className="text-zinc-200 font-semibold">{activeSession?.courseCode || 'CSC 403'}</span> (
-              {activeSession?.courseTitle || 'Computer Vision & Biometrics'})
-            </p>
+            {activeSession && (
+              <p className="text-[11px] text-zinc-400 truncate max-w-sm">
+                {activeSession.courseCode} • {activeSession.title}
+              </p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="text-right">
-            <div className="text-sm font-mono font-bold text-zinc-200">{currentTime}</div>
-            <div className="text-[10px] text-zinc-500 font-mono">
-              Session: {activeSession?.openingTime || '09:00'} - {activeSession?.closingTime || '12:00'}
-            </div>
+          <div className="flex items-center gap-2 font-mono text-xs text-zinc-300 bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800">
+            <Clock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{clock}</span>
           </div>
 
           <button
-            onClick={() => {
-              stopCamera();
-              navigate('/dashboard');
-            }}
-            title="Return to Staff Console"
-            className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-semibold text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            onClick={handleExitKiosk}
+            title="Return to Lecturer Console"
+            className="p-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Staff Console</span>
+            <X className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {/* Main Kiosk Viewport */}
-      <main className="flex-1 flex flex-col items-center justify-center max-w-2xl mx-auto w-full py-6">
-        {/* STEP 1: MATRICULATION NUMBER ENTRY */}
-        {step === 'MATRIC' && (
-          <div className="w-full space-y-6 animate-fadeIn">
-            <div className="text-center space-y-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 font-mono">
-                Step 1 of 2 • Identification
-              </span>
-              <h2 className="text-2xl font-extrabold text-zinc-100">Enter Matriculation Number</h2>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                Enter your university matriculation number to begin immediate facial verification.
+      {/* Main Kiosk Content Area */}
+      <main className="flex-1 flex items-center justify-center p-6">
+        {/* State: WAITING_SESSION */}
+        {step === 'WAITING_SESSION' && (
+          <div className="max-w-md w-full text-center space-y-4 p-8 rounded-2xl bg-zinc-900/50 border border-zinc-800 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-zinc-800/80 flex items-center justify-center mx-auto text-zinc-400">
+              <Tv className="w-8 h-8" />
+            </div>
+            <h2 className="text-lg font-bold text-zinc-100">No Active Attendance Session</h2>
+            <p className="text-xs text-zinc-400">
+              The attendance kiosk cannot accept check-ins without an active course session. An authorized lecturer must initiate a session from their console.
+            </p>
+            <button
+              onClick={handleExitKiosk}
+              className="mt-4 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 transition-colors"
+            >
+              Return to Console
+            </button>
+          </div>
+        )}
+
+        {/* State: ENTER_MATRIC */}
+        {step === 'ENTER_MATRIC' && (
+          <div className="max-w-md w-full space-y-6 p-8 rounded-2xl bg-zinc-900/60 border border-zinc-800 shadow-2xl backdrop-blur-xl">
+            <div className="text-center space-y-1">
+              <h2 className="text-lg font-bold text-zinc-100">Mark Your Attendance</h2>
+              <p className="text-xs text-zinc-400">
+                Enter your university matriculation number to begin verification.
               </p>
             </div>
 
+            {matricError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{matricError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleMatricSubmit} className="space-y-4">
-              <div className="relative">
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Matriculation Number <span className="text-zinc-500 font-mono text-[10px]">(2xxx/2xxxxx)</span>
+                </label>
                 <input
                   type="text"
                   value={matricNumber}
-                  onChange={(e) => setMatricNumber(e.target.value.toUpperCase())}
-                  placeholder="e.g. CSC/2021/001"
+                  onChange={(e) => {
+                    setMatricNumber(e.target.value);
+                    if (matricError) setMatricError(null);
+                  }}
+                  placeholder="2022/241414"
+                  className="w-full px-4 py-3 rounded-xl bg-zinc-950 border border-zinc-800 text-base text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500 text-center font-mono tracking-wider font-semibold"
                   autoFocus
-                  className="w-full px-5 py-4 rounded-2xl bg-zinc-900/90 border-2 border-zinc-700 text-xl font-mono text-center text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500 tracking-wider shadow-xl transition-all"
+                  required
                 />
               </div>
 
               <button
                 type="submit"
-                disabled={!matricNumber.trim()}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-50 text-zinc-950 font-bold text-base flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 transition-all cursor-pointer"
+                disabled={isVerifying}
+                className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 transition-all cursor-pointer"
               >
-                <span>Proceed to Facial Verification</span>
-                <ArrowRight className="w-5 h-5" />
+                {isVerifying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying Student...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Proceed to Facial Verification</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
-
-            {/* Quick Demo Student Selector Pills */}
-            <div className="pt-4 border-t border-zinc-800/80">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-500 block text-center mb-2.5">
-                Quick Evaluator Selection (Click to test):
-              </span>
-              <div className="flex flex-wrap justify-center gap-2">
-                {demoStudents.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => {
-                      setMatricNumber(s.matricNumber);
-                      setStudent(s);
-                      setFaceAttemptCount(0);
-                      setQrAttemptCount(0);
-                      setFaceErrorMessage(null);
-                      setStep('VERIFY_FACE');
-                      startCamera();
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/50 text-xs text-zinc-300 font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span className="font-bold text-emerald-400">{s.matricNumber}</span>
-                    <span className="text-zinc-500">• {s.fullName.split(' ')[0]}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
-        {/* STEP 2: PRIMARY METHOD - FACIAL VERIFICATION */}
-        {step === 'VERIFY_FACE' && (
-          <div className="w-full space-y-5 animate-fadeIn text-center">
-            <div className="space-y-1">
-              <div className="flex items-center justify-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono">
-                  PRIMARY VERIFICATION METHOD
+        {/* State: VERIFY_FACE (Primary Method) */}
+        {step === 'VERIFY_FACE' && student && (
+          <div className="max-w-lg w-full space-y-4 p-6 rounded-2xl bg-zinc-900/60 border border-zinc-800 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 font-mono">
+                  Primary Verification Method
                 </span>
-                <span className="text-xs text-zinc-400 font-mono">
-                  • Student: <strong className="text-zinc-200">{student?.fullName}</strong> ({student?.matricNumber})
-                </span>
+                <h3 className="text-base font-bold text-zinc-100 mt-0.5">{student.fullName}</h3>
+                <p className="text-xs text-zinc-400 font-mono">{student.matricNumber}</p>
               </div>
-              <h2 className="text-2xl font-black text-zinc-100">Look at the Camera</h2>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                Position your face within the frame. Facial verification will complete your attendance automatically without needing a QR code.
-              </p>
+
+              <div className="text-right">
+                <span className="text-[10px] text-zinc-500 block">Attempt</span>
+                <span className="text-xs font-mono font-bold text-zinc-300">{faceAttempts + 1} of 2</span>
+              </div>
             </div>
 
-            {/* Face Viewfinder Frame */}
-            <div className="relative rounded-2xl overflow-hidden bg-zinc-950 border-2 border-emerald-500/60 aspect-video max-w-lg mx-auto flex items-center justify-center shadow-2xl">
+            {/* Live Camera Viewfinder */}
+            <div className="relative aspect-video bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 flex items-center justify-center">
               <video
                 ref={videoRef}
                 autoPlay
-                playsInline
                 muted
-                className="w-full h-full object-cover -scale-x-100"
+                playsInline
+                className="w-full h-full object-cover"
               />
-              <canvas ref={canvasRef} className="hidden" />
 
-              {/* Oval Face Alignment Reticle */}
+              {/* Viewfinder Oval Guide */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className={`w-48 h-60 rounded-full border-2 ${faceErrorMessage ? 'border-amber-400' : 'border-emerald-400'} shadow-[0_0_30px_rgba(16,185,129,0.35)] flex items-center justify-center transition-colors`}>
-                  <span className="text-[10px] text-emerald-300 font-mono uppercase bg-zinc-950/80 px-2 py-0.5 rounded">
-                    {faceErrorMessage ? 'Adjust Face Position' : 'Align Face Inside'}
-                  </span>
-                </div>
+                <div className="w-44 h-56 rounded-full border-2 border-dashed border-emerald-400/60 shadow-inner" />
               </div>
 
               {isVerifying && (
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center gap-2 text-emerald-400 font-semibold text-sm">
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>Analyzing facial biometrics...</span>
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center gap-2">
+                  <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                  <p className="text-xs text-zinc-200 font-medium">Extracting biometric embedding...</p>
                 </div>
               )}
             </div>
 
-            {/* Error or Retries Message */}
-            {faceErrorMessage && (
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs max-w-lg mx-auto flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-left">
-                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span>{faceErrorMessage} (Attempt {faceAttemptCount} of 2)</span>
-                </div>
+            {verificationFeedback && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{verificationFeedback}</span>
               </div>
             )}
 
-            {/* Guidance tips */}
-            <div className="flex items-center justify-center gap-6 text-xs text-zinc-400">
-              <span>• Good ambient lighting</span>
-              <span>• Look directly ahead</span>
-              <span>• Neutral expression</span>
-            </div>
+            {/* Action Buttons */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={resetKioskForNextStudent}
+                className="px-3 py-2 rounded-xl text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Cancel
+              </button>
 
-            {/* Primary Action Buttons */}
-            <div className="flex items-center justify-center gap-3 pt-2">
               <button
                 type="button"
                 disabled={isVerifying}
-                onClick={() => handlePerformFacialVerification(false)}
-                className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-sm flex items-center gap-2 shadow-xl shadow-emerald-500/25 transition-all cursor-pointer"
+                onClick={handlePerformFacialVerification}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-zinc-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
               >
                 <Camera className="w-4 h-4" />
-                <span>Verify Face Now</span>
+                <span>Verify Face</span>
               </button>
 
+              {/* Offer QR Fallback if face attempt failed or student prefers */}
               <button
                 type="button"
-                disabled={isVerifying}
-                onClick={() => handlePerformFacialVerification(true)}
-                className="px-4 py-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-cyan-400 font-semibold text-xs flex items-center gap-2 transition-colors cursor-pointer"
+                onClick={handleSwitchToQrFallback}
+                className="px-3.5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Simulate Real Match</span>
-              </button>
-
-              {/* FALLBACK PROMPT: Shown if face fails after attempts OR if no face enrolled */}
-              {(faceAttemptCount >= 1 || !student?.hasFaceEnrolled) && (
-                <button
-                  type="button"
-                  onClick={handleSwitchToQrFallback}
-                  className="px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer animate-pulse"
-                >
-                  <QrCode className="w-4 h-4" />
-                  <span>Use QR Fallback</span>
-                </button>
-              )}
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={handleResetKiosk}
-                className="text-xs text-zinc-500 hover:text-zinc-300 underline font-mono"
-              >
-                Cancel / Change Matriculation Number
+                <QrCode className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Use QR Fallback</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* STEP 3: FALLBACK METHOD - STUDENT QR CREDENTIAL */}
-        {step === 'QR_FALLBACK' && (
-          <div className="w-full space-y-5 animate-fadeIn text-center">
-            <div className="space-y-1">
-              <div className="flex items-center justify-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 font-mono">
-                  FALLBACK CREDENTIAL METHOD
+        {/* State: QR_FALLBACK (Secondary Fallback Method) */}
+        {step === 'QR_FALLBACK' && student && (
+          <div className="max-w-lg w-full space-y-4 p-6 rounded-2xl bg-zinc-900/60 border border-zinc-800 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-cyan-400 font-mono">
+                  Fallback Verification Method
                 </span>
-                <span className="text-xs text-zinc-400 font-mono">
-                  • Student: <strong className="text-zinc-200">{student?.fullName}</strong> ({student?.matricNumber})
-                </span>
-              </div>
-              <h2 className="text-2xl font-black text-zinc-100">Scan Student QR Credential</h2>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                Hold your personal Student QR Credential card in front of the camera lens to complete fallback attendance check-in.
-              </p>
-            </div>
-
-            {/* QR Viewfinder Frame */}
-            <div className="relative rounded-2xl overflow-hidden bg-zinc-950 border-2 border-amber-500/50 aspect-video max-w-lg mx-auto flex items-center justify-center shadow-2xl">
-              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-              <canvas ref={canvasRef} className="hidden" />
-
-              {/* Viewfinder Target Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-52 h-52 border-2 border-amber-400/80 rounded-2xl relative shadow-[0_0_25px_rgba(245,158,11,0.3)]">
-                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-amber-400 rounded-tl-lg" />
-                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-amber-400 rounded-tr-lg" />
-                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-amber-400 rounded-bl-lg" />
-                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-amber-400 rounded-br-lg" />
-                  <div className="w-full h-0.5 bg-amber-400 shadow-[0_0_10px_#f59e0b] animate-scanline absolute top-0" />
-                </div>
+                <h3 className="text-base font-bold text-zinc-100 mt-0.5">{student.fullName}</h3>
+                <p className="text-xs text-zinc-400 font-mono">{student.matricNumber}</p>
               </div>
 
-              {isVerifying && (
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center gap-2 text-amber-400 font-semibold text-sm">
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>Validating Student Credential...</span>
-                </div>
-              )}
-            </div>
-
-            {/* Offline Single-PC Testing Simulation Shortcut */}
-            <div className="p-3.5 rounded-xl bg-zinc-900/80 border border-zinc-800 max-w-lg mx-auto flex items-center justify-between gap-3 text-xs">
-              <div className="text-left">
-                <span className="font-semibold text-zinc-300 block">Single-PC Demonstration Workflow:</span>
-                <span className="text-[11px] text-zinc-500">
-                  Simulate scanning {student?.fullName}'s registered student QR credential card.
-                </span>
-              </div>
               <button
-                type="button"
-                onClick={handleSimulateStudentQrCredential}
-                className="px-3.5 py-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 font-semibold text-xs transition-colors cursor-pointer flex-shrink-0"
-              >
-                Scan Student QR Card
-              </button>
-            </div>
-
-            <div className="flex items-center justify-center gap-4 pt-1">
-              <button
-                type="button"
                 onClick={() => {
+                  stopCamera();
                   setStep('VERIFY_FACE');
                   startCamera();
                 }}
-                className="text-xs text-zinc-400 hover:text-zinc-200 underline font-mono"
+                className="text-xs text-zinc-400 hover:text-emerald-400 transition-colors flex items-center gap-1"
               >
-                ← Return to Facial Verification
-              </button>
-              <button
-                type="button"
-                onClick={handleResetKiosk}
-                className="text-xs text-zinc-500 hover:text-zinc-300 underline font-mono"
-              >
-                Cancel Check-in
+                <ArrowLeft className="w-3 h-3" />
+                <span>Back to Face</span>
               </button>
             </div>
+
+            <div className="relative aspect-video bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 flex items-center justify-center">
+              <video
+                ref={videoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover"
+              />
+
+              {/* QR Scan Target Overlay */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-48 h-48 rounded-xl border-2 border-cyan-400/80 shadow-inner flex items-center justify-center">
+                  <QrCode className="w-12 h-12 text-cyan-400/30" />
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-400 text-center">
+              Hold your personal student QR credential card up to the camera to scan.
+            </p>
+
+            {verificationFeedback && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{verificationFeedback}</span>
+              </div>
+            )}
           </div>
         )}
 
-        {/* STEP 4: RESULT / FEEDBACK SCREEN */}
+        {/* State: RESULT */}
         {step === 'RESULT' && (
-          <div className="w-full max-w-md mx-auto space-y-6 text-center animate-fadeIn">
-            {resultSuccess ? (
-              <div className="p-8 rounded-3xl bg-zinc-900/90 border border-emerald-500/40 glow-emerald-lg space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-10 h-10" />
-                </div>
-                <div>
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono">
-                    STATUS: {resultStatus}
-                  </span>
-                  <h2 className="text-2xl font-black text-zinc-100 mt-2">{student?.fullName}</h2>
-                  <p className="text-xs text-zinc-400 font-mono mt-0.5">{student?.matricNumber}</p>
-                </div>
+          <div className="max-w-md w-full text-center space-y-5 p-8 rounded-2xl bg-zinc-900/60 border border-zinc-800 shadow-2xl backdrop-blur-xl">
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto ${
+                resultSuccess
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                  : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+              }`}
+            >
+              {resultSuccess ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
+            </div>
 
-                <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-xs space-y-1.5 font-mono">
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Course:</span>
-                    <span className="text-zinc-200 font-semibold">{activeSession?.courseCode}</span>
-                  </div>
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Verification Method:</span>
-                    <span className={`font-bold ${verificationMethod === 'FACE_VERIFIED' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {verificationMethod === 'FACE_VERIFIED' ? 'FACE VERIFIED (PRIMARY)' : 'QR FALLBACK'}
+            <div>
+              <h2 className="text-xl font-bold text-zinc-100">
+                {resultSuccess ? (
+                  <span>
+                    Attendance Marked:{' '}
+                    <span className={attendanceStatus === 'LATE' ? 'text-amber-400' : 'text-emerald-400'}>
+                      {attendanceStatus}
                     </span>
-                  </div>
-                  {similarityScore && (
-                    <div className="flex justify-between text-zinc-400">
-                      <span>Biometric Confidence:</span>
-                      <span className="text-emerald-400 font-bold">{similarityScore}%</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-zinc-400">
-                    <span>Timestamp:</span>
-                    <span className="text-zinc-300">{new Date().toLocaleTimeString()}</span>
-                  </div>
-                </div>
-
-                <p className="text-xs text-emerald-400/90">{resultMessage}</p>
-              </div>
-            ) : (
-              <div className="p-8 rounded-3xl bg-zinc-900/90 border border-rose-500/40 space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center mx-auto">
-                  <XCircle className="w-10 h-10" />
-                </div>
-                <div>
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 font-mono">
-                    VERIFICATION UNSUCCESSFUL
                   </span>
-                  <h2 className="text-xl font-extrabold text-zinc-100 mt-2">Attendance Not Marked</h2>
+                ) : (
+                  'Attendance Verification Failed'
+                )}
+              </h2>
+              <p className="text-xs text-zinc-300 mt-2 max-w-sm mx-auto">{resultMessage}</p>
+
+              {resultSuccess && verificationMethod && (
+                <div className="mt-3 inline-block px-3 py-1 rounded-full bg-zinc-800 text-[10px] font-mono text-zinc-400 border border-zinc-700">
+                  Method:{' '}
+                  {verificationMethod === 'FACE_VERIFIED'
+                    ? 'Primary Facial Verification'
+                    : 'Student QR Fallback'}
                 </div>
+              )}
+            </div>
 
-                <p className="text-xs text-rose-300 bg-rose-950/40 p-3 rounded-xl border border-rose-900/50">
-                  {resultMessage}
-                </p>
-
-                <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800 text-xs text-zinc-400 text-left space-y-1">
-                  <span className="font-semibold text-zinc-300 block">Next steps:</span>
-                  <span>1. If face verification failed, use the QR Fallback credential.</span>
-                  <span className="block">2. If neither method succeeds, please contact your course lecturer for manual attendance override.</span>
-                </div>
-
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={handleResetKiosk}
-                    className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-semibold text-zinc-200 cursor-pointer"
-                  >
-                    Try Again
-                  </button>
-
-                  <button
-                    onClick={handleSwitchToQrFallback}
-                    className="px-4 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold cursor-pointer"
-                  >
-                    Use QR Fallback
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Auto-reset countdown indicator */}
-            <div className="flex items-center justify-center gap-3">
-              <span className="text-xs text-zinc-500 font-mono">
-                Screen resetting in <strong className="text-emerald-400">{countdown}s</strong>
-              </span>
+            {/* Countdown privacy reset */}
+            <div className="pt-4 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-500">
+              <span>Automatic privacy reset in {countdown}s</span>
               <button
-                onClick={handleResetKiosk}
-                className="text-xs text-zinc-400 hover:text-zinc-200 underline font-medium cursor-pointer"
+                onClick={resetKioskForNextStudent}
+                className="text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
               >
-                Next Student Now
+                Next Student Now &rarr;
               </button>
             </div>
           </div>
         )}
       </main>
-
-      {/* Footer / Privacy note */}
-      <footer className="text-center text-[11px] text-zinc-500 py-2 border-t border-zinc-800/60 flex items-center justify-between">
-        <span>ClassGuard Kiosk System • Offline Biometric Processing</span>
-        <span>Face Verification First → QR Fallback Second → Lecturer Override Last</span>
-      </footer>
     </div>
   );
 };

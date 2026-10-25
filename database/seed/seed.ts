@@ -14,25 +14,36 @@ export async function runSeed(customDbPath?: string) {
   // Password hashes
   const adminPasswordHash = bcrypt.hashSync('Admin@123', 10);
   const lecturerPasswordHash = bcrypt.hashSync('Lecturer@123', 10);
+  const studentPasswordHash = bcrypt.hashSync('Student@123', 10);
   const now = new Date().toISOString();
 
   // 1. Users
   const adminId = 'usr-admin-001';
   const lecturerUserId = 'usr-lecturer-001';
+  const studentUserId = 'usr-student-001';
 
+  // Superadmin (IT Personnel)
   db.run(
     `INSERT OR REPLACE INTO users (id, username, email, password_hash, role, full_name, active, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    [adminId, 'admin', 'admin@classguard.edu', adminPasswordHash, 'ADMIN', 'System Administrator', now, now]
+    [adminId, 'admin', 'admin@classguard.edu', adminPasswordHash, 'SUPERADMIN', 'System IT Administrator', now, now]
   );
 
+  // Lecturer (Admin Role: Attendance Manager)
   db.run(
     `INSERT OR REPLACE INTO users (id, username, email, password_hash, role, full_name, active, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    [lecturerUserId, 'turing', 'turing@classguard.edu', lecturerPasswordHash, 'LECTURER', 'Dr. Alan Turing', now, now]
+    [lecturerUserId, 'turing', 'turing@classguard.edu', lecturerPasswordHash, 'ADMIN', 'Dr. Alan Turing', now, now]
   );
 
-  console.log('Seed: Created Admin and Lecturer users.');
+  // Student User
+  db.run(
+    `INSERT OR REPLACE INTO users (id, username, email, password_hash, role, full_name, active, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    [studentUserId, '2022/241414', 'student@classguard.edu', studentPasswordHash, 'STUDENT', 'Ayomide Balogun', now, now]
+  );
+
+  console.log('Seed: Created Superadmin, Lecturer (Admin), and Student users.');
 
   // 2. Lecturers
   const lecturers = [
@@ -68,24 +79,24 @@ export async function runSeed(customDbPath?: string) {
   }
   console.log(`Seed: Inserted ${courses.length} courses.`);
 
-  // 4. Students (16 fictional students)
+  // 4. Students (16 fictional students with valid 2xxx/2xxxxx matriculation numbers)
   const students = [
-    { id: 'stu-001', matric: 'CSC/2021/001', name: 'Ayomide Balogun', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-002', matric: 'CSC/2021/002', name: 'Chinedu Okonkwo', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-003', matric: 'CSC/2021/003', name: 'Fatima Abubakar', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-004', matric: 'CSC/2021/004', name: 'Emeka Nwosu', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-005', matric: 'CSC/2021/005', name: 'Zainab Danjuma', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-006', matric: 'CSC/2021/006', name: 'Babatunde Fashola', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-007', matric: 'CSC/2021/007', name: 'Ngozi Eze', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-008', matric: 'CSC/2021/008', name: 'Tariq Al-Mansoor', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-009', matric: 'CSC/2021/009', name: 'Kehinde Adeleke', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-010', matric: 'CSC/2021/010', name: 'Blessing Udoh', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-011', matric: 'SWE/2021/011', name: 'David Adeyemi', dept: 'Software Engineering', level: '400L' },
-    { id: 'stu-012', matric: 'SWE/2021/012', name: 'Grace Oladipo', dept: 'Software Engineering', level: '400L' },
-    { id: 'stu-013', matric: 'SWE/2021/013', name: 'Ibrahim Musa', dept: 'Software Engineering', level: '400L' },
-    { id: 'stu-014', matric: 'CSC/2021/014', name: 'Precious Johnson', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-015', matric: 'CSC/2021/015', name: 'Samuel Kalu', dept: 'Computer Science', level: '400L' },
-    { id: 'stu-016', matric: 'CSC/2021/016', name: 'Halima Bello', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-001', matric: '2022/241414', name: 'Ayomide Balogun', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-002', matric: '2022/241415', name: 'Chinedu Okonkwo', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-003', matric: '2022/241416', name: 'Fatima Abubakar', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-004', matric: '2022/241417', name: 'Emeka Nwosu', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-005', matric: '2022/241418', name: 'Zainab Danjuma', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-006', matric: '2022/241419', name: 'Babatunde Fashola', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-007', matric: '2022/241420', name: 'Ngozi Eze', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-008', matric: '2022/241421', name: 'Tariq Al-Mansoor', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-009', matric: '2023/247230', name: 'Kehinde Adeleke', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-010', matric: '2023/247231', name: 'Blessing Udoh', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-011', matric: '2023/247232', name: 'David Adeyemi', dept: 'Software Engineering', level: '400L' },
+    { id: 'stu-012', matric: '2023/247233', name: 'Grace Oladipo', dept: 'Software Engineering', level: '400L' },
+    { id: 'stu-013', matric: '2024/246825', name: 'Ibrahim Musa', dept: 'Software Engineering', level: '400L' },
+    { id: 'stu-014', matric: '2024/246826', name: 'Precious Johnson', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-015', matric: '2024/246827', name: 'Samuel Kalu', dept: 'Computer Science', level: '400L' },
+    { id: 'stu-016', matric: '2024/246828', name: 'Halima Bello', dept: 'Computer Science', level: '400L' },
   ];
 
   for (const s of students) {

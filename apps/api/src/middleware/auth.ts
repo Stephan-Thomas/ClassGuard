@@ -1,11 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/env.js';
+import { UserRole } from '@classguard/shared';
 
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  role: 'ADMIN' | 'LECTURER';
+  role: UserRole;
   fullName: string;
 }
 
@@ -29,7 +30,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
   }
 }
 
-export function authorize(...allowedRoles: Array<'ADMIN' | 'LECTURER'>) {
+export function authorize(...allowedRoles: UserRole[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
@@ -45,3 +46,4 @@ export function authorize(...allowedRoles: Array<'ADMIN' | 'LECTURER'>) {
     next();
   };
 }
+

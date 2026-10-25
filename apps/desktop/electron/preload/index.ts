@@ -1,9 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 export const classGuardApi = {
-  // Auth
+  // Auth & Session
   login: (credentials: { email: string; password: string }) =>
     ipcRenderer.invoke('auth:login', credentials),
+  validateSession: (token: string) =>
+    ipcRenderer.invoke('auth:validateSession', token),
+  logout: (token?: string) =>
+    ipcRenderer.invoke('auth:logout', token),
 
   // Students
   getStudents: (search?: string) =>
@@ -84,6 +88,20 @@ export const classGuardApi = {
   // Audit
   getAuditLogs: (limit?: number) =>
     ipcRenderer.invoke('audit:list', limit),
+
+  // Superadmin
+  getSuperadminOverview: () =>
+    ipcRenderer.invoke('superadmin:overview'),
+  createLecturer: (data: any) =>
+    ipcRenderer.invoke('superadmin:lecturers:create', data),
+  toggleLecturerStatus: (lecturerId: string, active: boolean) =>
+    ipcRenderer.invoke('superadmin:lecturers:toggle', { lecturerId, active }),
+
+  // Student Portal
+  getStudentAttendanceHistory: (matricNumber: string) =>
+    ipcRenderer.invoke('student:attendanceHistory', matricNumber),
+  getStudentAttendanceSummary: (matricNumber: string) =>
+    ipcRenderer.invoke('student:summary', matricNumber),
 
   // System
   toggleFullscreen: () =>

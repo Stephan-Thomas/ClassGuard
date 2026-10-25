@@ -4,6 +4,7 @@ import { DesktopDatabaseService } from '../services/sqlite.service.js';
 import { AttendanceService } from '../services/attendance.service.js';
 import { EnrollmentService } from '../services/enrollment.service.js';
 import { DesktopSyncService } from '../services/sync.service.js';
+import { DesktopSessionService } from '../services/session.service.js';
 import {
   createSignedQRToken,
   generateSessionKeyPair,
@@ -15,29 +16,84 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const attendanceService = AttendanceService.getInstance();
   const enrollmentService = EnrollmentService.getInstance();
   const syncService = DesktopSyncService.getInstance();
+  const sessionService = DesktopSessionService.getInstance();
 
-  // --- Auth ---
+  // --- Auth & Session ---
   ipcMain.handle('auth:login', async (_, { email, password }) => {
     try {
-      const user = db.getUserByEmail(email);
-      if (!user) return { success: false, error: 'Invalid email or password' };
-      if (!user.active) return { success: false, error: 'User account is deactivated' };
+      const trimmedIdentifier = (email || '').trim();
+      let user = db.getUserByEmail(trimmedIdentifier);
+      if (!user) {
+        // Also check by username or matriculation number for student accounts
+        user = (db as any).client.queryOne(
+          'SELECT id, username, email, password_hash as passwordHash, role, full_name as fullName, active FROM users WHERE username = ?',
+          [trimmedIdentifier]
+        );
+      }
+
+      if (!user) {
+        return { success: false, error: 'Invalid email, username, or password' };
+      }
+
+      if (!user.active) {
+        return { success: false, error: 'Your account is deactivated. Please contact IT Administration.' };
+      }
 
       const matches = await bcrypt.compare(password, user.passwordHash);
-      if (!matches) return { success: false, error: 'Invalid email or password' };
+      if (!matches) {
+        return { success: false, error: 'Invalid email, username, or password' };
+      }
 
-      db.logAudit(user.id, user.fullName, 'LOCAL_LOGIN', 'User', user.id, `User ${user.email} logged into desktop app`);
+      // Create authoritative cryptographic session token
+      const session = sessionService.createSession({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        fullName: user.fullName,
+        active: !!user.active,
+        createdAt: '',
+        updatedAt: '',
+      });
+
+      db.logAudit(
+        user.id,
+        user.fullName,
+        'LOCAL_LOGIN',
+        'User',
+        user.id,
+        `User ${user.email} (${user.role}) authenticated successfully.`
+      );
 
       return {
         success: true,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          fullName: user.fullName,
-        },
+        user: session.user,
+        token: session.token,
+        expiresAt: session.expiresAt,
       };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('auth:validateSession', async (_, token: string) => {
+    try {
+      const res = sessionService.validateSession(token);
+      if (!res.valid || !res.user) {
+        return { success: false, error: res.error || 'Session is invalid or expired' };
+      }
+      return { success: true, user: res.user };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('auth:logout', async (_, token?: string) => {
+    try {
+      if (token) {
+        sessionService.revokeSession(token);
+      }
+      return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -92,7 +148,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('courses:create', async (_, data) => {
     try {
       const course = db.createCourse(data);
-      db.logAudit(undefined, 'Admin', 'COURSE_CREATED', 'Course', course.id, `Created course ${course.code}`);
+      db.logAudit(undefined, 'Lecturer', 'COURSE_CREATED', 'Course', course.id, `Created course ${course.code}`);
       return { success: true, data: course };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -326,6 +382,32 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // --- Audit ---
   ipcMain.handle('audit:list', async (_, limit?: number) => {
     return { success: true, data: db.getAuditLogs(limit) };
+  });
+
+  // --- Superadmin Operations ---
+  ipcMain.handle('superadmin:overview', async () => {
+    return { success: true, data: db.getSuperadminStats() };
+  });
+
+  ipcMain.handle('superadmin:lecturers:create', async (_, data) => {
+    return db.createLecturerUser(data);
+  });
+
+  ipcMain.handle('superadmin:lecturers:toggle', async (_, { lecturerId, active }) => {
+    const ok = db.toggleLecturerActive(lecturerId, active);
+    db.logAudit(undefined, 'Superadmin', 'LECTURER_STATUS_TOGGLED', 'Lecturer', lecturerId, `Lecturer ${lecturerId} active status set to ${active}`);
+    return { success: ok };
+  });
+
+  // --- Student Portal Operations ---
+  ipcMain.handle('student:attendanceHistory', async (_, matricNumber: string) => {
+    return { success: true, data: db.getStudentAttendanceHistory(matricNumber) };
+  });
+
+  ipcMain.handle('student:summary', async (_, matricNumber: string) => {
+    const summary = db.getStudentAttendanceSummary(matricNumber);
+    if (!summary) return { success: false, error: 'Student not found' };
+    return { success: true, data: summary };
   });
 
   // --- System Window & Kiosk ---

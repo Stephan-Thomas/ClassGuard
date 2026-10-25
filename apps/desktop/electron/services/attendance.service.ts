@@ -9,6 +9,7 @@ import {
   VerificationMethod,
   DEFAULT_EUCLIDEAN_THRESHOLD,
   verifySignedQRToken,
+  isValidMatricNumber,
 } from '@classguard/shared';
 
 export interface FaceAttendanceParams {
@@ -93,7 +94,7 @@ export class AttendanceService {
       return this.db.getSessionById(sessionId);
     }
     const sessions = this.db.getSessions(courseId);
-    return sessions.find((s) => s.status === 'ACTIVE') || sessions[0] || null;
+    return sessions.find((s) => s.status === 'ACTIVE') || null;
   }
 
   /**
@@ -108,6 +109,14 @@ export class AttendanceService {
   public async verifyFaceAndRecord(params: FaceAttendanceParams): Promise<AttendanceResult> {
     try {
       const matric = params.matricNumber.trim().toUpperCase();
+
+      if (!isValidMatricNumber(matric)) {
+        return {
+          success: false,
+          statusCode: 'STUDENT_NOT_FOUND',
+          message: `Invalid matriculation number format "${matric}". Must match 2xxx/2xxxxx (e.g. 2022/241414).`,
+        };
+      }
 
       // 1. Verify student exists and is active
       const student = this.db.getStudentByMatric(matric);

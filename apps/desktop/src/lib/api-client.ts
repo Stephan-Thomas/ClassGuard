@@ -1,12 +1,13 @@
 import { ClassGuardApi } from '../types/electron.d.js';
+import { User } from '@classguard/shared';
 
 // In-memory browser mockup fallback for standalone browser preview / testing
 const mockStudents = [
-  { id: 'stu-001', matricNumber: 'CSC/2021/001', fullName: 'Ayomide Balogun', department: 'Computer Science', level: '400L', email: 'csc.2021.001@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'stu-002', matricNumber: 'CSC/2021/002', fullName: 'Chinedu Okonkwo', department: 'Computer Science', level: '400L', email: 'csc.2021.002@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'stu-003', matricNumber: 'CSC/2021/003', fullName: 'Fatima Abubakar', department: 'Computer Science', level: '400L', email: 'csc.2021.003@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'stu-004', matricNumber: 'CSC/2021/004', fullName: 'Emeka Nwosu', department: 'Computer Science', level: '400L', email: 'csc.2021.004@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'stu-005', matricNumber: 'CSC/2021/005', fullName: 'Zainab Danjuma', department: 'Computer Science', level: '400L', email: 'csc.2021.005@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'stu-001', matricNumber: '2022/241414', fullName: 'Ayomide Balogun', department: 'Computer Science', level: '400L', email: '2022.241414@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'stu-002', matricNumber: '2022/241415', fullName: 'Chinedu Okonkwo', department: 'Computer Science', level: '400L', email: '2022.241415@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'stu-003', matricNumber: '2022/241416', fullName: 'Fatima Abubakar', department: 'Computer Science', level: '400L', email: '2022.241416@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'stu-004', matricNumber: '2022/241417', fullName: 'Emeka Nwosu', department: 'Computer Science', level: '400L', email: '2022.241417@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'stu-005', matricNumber: '2022/241418', fullName: 'Zainab Danjuma', department: 'Computer Science', level: '400L', email: '2022.241418@student.classguard.edu', active: true, hasFaceEnrolled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
 ];
 
 const mockCourses = [
@@ -55,19 +56,55 @@ const mockSessions = [
 ];
 
 const mockRecords: any[] = [
-  { id: 'rec-1', studentId: 'stu-001', matricNumber: 'CSC/2021/001', studentName: 'Ayomide Balogun', courseId: 'crs-001', sessionId: 'ses-csc401-closed', timestamp: '2026-10-15T10:05:00Z', status: 'PRESENT', verificationMethod: 'QR_AND_FACE', similarityScore: 94.5, syncStatus: 'SYNCED', createdAt: '2026-10-15T10:05:00Z' },
-  { id: 'rec-2', studentId: 'stu-002', matricNumber: 'CSC/2021/002', studentName: 'Chinedu Okonkwo', courseId: 'crs-001', sessionId: 'ses-csc401-closed', timestamp: '2026-10-15T10:22:00Z', status: 'LATE', verificationMethod: 'QR_AND_FACE', similarityScore: 92.0, syncStatus: 'SYNCED', createdAt: '2026-10-15T10:22:00Z' },
+  { id: 'rec-1', studentId: 'stu-001', matricNumber: '2022/241414', studentName: 'Ayomide Balogun', courseId: 'crs-001', sessionId: 'ses-csc401-closed', timestamp: '2026-10-15T10:05:00Z', status: 'PRESENT', verificationMethod: 'FACE_VERIFIED', similarityScore: 0.18, syncStatus: 'SYNCED', createdAt: '2026-10-15T10:05:00Z' },
+  { id: 'rec-2', studentId: 'stu-002', matricNumber: '2022/241415', studentName: 'Chinedu Okonkwo', courseId: 'crs-001', sessionId: 'ses-csc401-closed', timestamp: '2026-10-15T10:22:00Z', status: 'LATE', verificationMethod: 'FACE_VERIFIED', similarityScore: 0.22, syncStatus: 'SYNCED', createdAt: '2026-10-15T10:22:00Z' },
 ];
+
+let mockCurrentToken = '';
+let mockCurrentUser: User | null = null;
 
 const mockBrowserApi: ClassGuardApi = {
   login: async ({ email, password }) => {
-    if (email === 'admin@classguard.edu' && password === 'Admin@123') {
-      return { success: true, user: { id: 'usr-admin-001', username: 'admin', email, role: 'ADMIN', fullName: 'System Administrator', active: true, createdAt: '', updatedAt: '' } };
+    const trimmed = (email || '').trim().toLowerCase();
+    if (trimmed === 'admin@classguard.edu' && password === 'Admin@123') {
+      const user: User = { id: 'usr-admin-001', username: 'admin', email: 'admin@classguard.edu', role: 'SUPERADMIN', fullName: 'System IT Administrator', active: true, createdAt: '', updatedAt: '' };
+      mockCurrentUser = user;
+      mockCurrentToken = 'mock-superadmin-token';
+      return { success: true, user, token: mockCurrentToken, expiresAt: Date.now() + 86400000 };
     }
-    if (email === 'turing@classguard.edu' && password === 'Lecturer@123') {
-      return { success: true, user: { id: 'usr-lecturer-001', username: 'turing', email, role: 'LECTURER', fullName: 'Dr. Alan Turing', active: true, createdAt: '', updatedAt: '' } };
+    if (trimmed === 'turing@classguard.edu' && password === 'Lecturer@123') {
+      const user: User = { id: 'usr-lecturer-001', username: 'turing', email: 'turing@classguard.edu', role: 'ADMIN', fullName: 'Dr. Alan Turing', active: true, createdAt: '', updatedAt: '' };
+      mockCurrentUser = user;
+      mockCurrentToken = 'mock-lecturer-token';
+      return { success: true, user, token: mockCurrentToken, expiresAt: Date.now() + 86400000 };
     }
-    return { success: false, error: 'Invalid email or password' };
+    if ((trimmed === 'student@classguard.edu' || trimmed === '2022/241414') && password === 'Student@123') {
+      const user: User = { id: 'usr-student-001', username: '2022/241414', email: 'student@classguard.edu', role: 'STUDENT', fullName: 'Ayomide Balogun', active: true, createdAt: '', updatedAt: '' };
+      mockCurrentUser = user;
+      mockCurrentToken = 'mock-student-token';
+      return { success: true, user, token: mockCurrentToken, expiresAt: Date.now() + 86400000 };
+    }
+    return { success: false, error: 'Invalid email, username, or password' };
+  },
+  validateSession: async (token: string) => {
+    if (token === mockCurrentToken && mockCurrentUser) {
+      return { success: true, user: mockCurrentUser };
+    }
+    if (token === 'mock-superadmin-token') {
+      return { success: true, user: { id: 'usr-admin-001', username: 'admin', email: 'admin@classguard.edu', role: 'SUPERADMIN', fullName: 'System IT Administrator', active: true, createdAt: '', updatedAt: '' } };
+    }
+    if (token === 'mock-lecturer-token') {
+      return { success: true, user: { id: 'usr-lecturer-001', username: 'turing', email: 'turing@classguard.edu', role: 'ADMIN', fullName: 'Dr. Alan Turing', active: true, createdAt: '', updatedAt: '' } };
+    }
+    if (token === 'mock-student-token') {
+      return { success: true, user: { id: 'usr-student-001', username: '2022/241414', email: 'student@classguard.edu', role: 'STUDENT', fullName: 'Ayomide Balogun', active: true, createdAt: '', updatedAt: '' } };
+    }
+    return { success: false, error: 'Session token invalid or expired' };
+  },
+  logout: async () => {
+    mockCurrentUser = null;
+    mockCurrentToken = '';
+    return { success: true };
   },
   getStudents: async (search) => {
     if (search) {
@@ -107,7 +144,7 @@ const mockBrowserApi: ClassGuardApi = {
   },
   generateQrCredential: async (studentId) => {
     const s = mockStudents.find(x => x.id === studentId);
-    const cred = JSON.stringify({ type: 'STUDENT_CREDENTIAL', studentId, matricNumber: s?.matricNumber || 'CSC/2021/001' });
+    const cred = JSON.stringify({ type: 'STUDENT_CREDENTIAL', studentId, matricNumber: s?.matricNumber || '2022/241414' });
     if (s) (s as any).qrCredential = cred;
     return { success: true, qrCredential: cred, message: 'QR generated' };
   },
@@ -200,16 +237,16 @@ const mockBrowserApi: ClassGuardApi = {
       matricNumber: student.matricNumber,
       studentName: student.fullName,
       courseId: 'crs-002',
-      sessionId: 'ses-csc403-active',
+      sessionId: payload.sessionId || 'ses-csc403-active',
       timestamp: new Date().toISOString(),
       status: 'PRESENT' as const,
       verificationMethod: 'FACE_VERIFIED' as const,
-      similarityScore: 96.5,
+      similarityScore: 0.18,
       syncStatus: 'PENDING' as const,
       createdAt: new Date().toISOString(),
     };
     mockRecords.unshift(record);
-    return { success: true, statusCode: 'SUCCESS', message: 'Attendance marked successfully via Facial Verification: PRESENT!', studentName: student.fullName, matricNumber: student.matricNumber, attendanceStatus: 'PRESENT', verificationMethod: 'FACE_VERIFIED', similarityScore: 96.5, record };
+    return { success: true, statusCode: 'SUCCESS', message: 'Attendance marked successfully via Facial Verification: PRESENT!', studentName: student.fullName, matricNumber: student.matricNumber, attendanceStatus: 'PRESENT', verificationMethod: 'FACE_VERIFIED', similarityScore: 0.18, record };
   },
   verifyQrFallbackAndRecord: async (payload) => {
     const student = mockStudents[0];
@@ -219,7 +256,7 @@ const mockBrowserApi: ClassGuardApi = {
       matricNumber: student.matricNumber,
       studentName: student.fullName,
       courseId: 'crs-002',
-      sessionId: 'ses-csc403-active',
+      sessionId: payload.sessionId || 'ses-csc403-active',
       timestamp: new Date().toISOString(),
       status: 'PRESENT' as const,
       verificationMethod: 'QR_FALLBACK' as const,
@@ -266,13 +303,13 @@ const mockBrowserApi: ClassGuardApi = {
       sessionId: 'ses-csc403-active',
       timestamp: new Date().toISOString(),
       status: 'PRESENT' as const,
-      verificationMethod: 'QR_AND_FACE' as const,
-      similarityScore: 95.2,
+      verificationMethod: 'FACE_VERIFIED' as const,
+      similarityScore: 0.20,
       syncStatus: 'PENDING' as const,
       createdAt: new Date().toISOString(),
     };
     mockRecords.unshift(record);
-    return { success: true, statusCode: 'SUCCESS', message: 'Attendance marked successfully: PRESENT!', studentName: student.fullName, attendanceStatus: 'PRESENT', similarityScore: 95.2, record };
+    return { success: true, statusCode: 'SUCCESS', message: 'Attendance marked successfully: PRESENT!', studentName: student.fullName, attendanceStatus: 'PRESENT', similarityScore: 0.20, record };
   },
   getCourseReport: async () => ({
     success: true,
@@ -297,7 +334,7 @@ const mockBrowserApi: ClassGuardApi = {
   }),
   exportCsv: async () => ({
     success: true,
-    csv: 'Matriculation,Name,Present,Late,Absent,Percentage\nCSC/2021/001,Ayomide Balogun,2,0,0,100%\n',
+    csv: 'Matriculation,Name,Present,Late,Absent,Percentage\n2022/241414,Ayomide Balogun,2,0,0,100%\n',
     filename: 'Course_Report.csv',
   }),
   getSyncStatus: async () => ({
@@ -316,6 +353,40 @@ const mockBrowserApi: ClassGuardApi = {
       { id: '1', action: 'SYSTEM_STARTUP', entityType: 'System', details: 'ClassGuard desktop app started', timestamp: new Date().toISOString() },
     ],
   }),
+  getSuperadminOverview: async () => ({
+    success: true,
+    data: {
+      lecturersCount: 3,
+      coursesCount: 5,
+      activeSessionsCount: 1,
+      totalSessionsCount: 2,
+      auditLogsCount: 12,
+      pendingSyncCount: 0,
+      syncedCount: 2,
+      deviceStatus: 'HEALTHY_LOCAL_STATION',
+    },
+  }),
+  createLecturer: async (data: any) => {
+    return { success: true, lecturer: { id: `lec-${Date.now()}`, ...data, active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } };
+  },
+  toggleLecturerStatus: async () => ({ success: true }),
+  getStudentAttendanceHistory: async (matric: string) => {
+    return { success: true, data: mockRecords.filter(r => r.matricNumber === matric) };
+  },
+  getStudentAttendanceSummary: async (matric: string) => {
+    const stu = mockStudents.find(s => s.matricNumber === matric) || mockStudents[0];
+    return {
+      success: true,
+      data: {
+        student: stu,
+        courseSummaries: [
+          { courseId: 'crs-001', courseCode: 'CSC 401', courseTitle: 'Distributed Systems', presentCount: 2, lateCount: 0, totalAttended: 2, eligibleSessions: 2, attendancePercentage: 100 },
+          { courseId: 'crs-002', courseCode: 'CSC 403', courseTitle: 'Computer Vision', presentCount: 1, lateCount: 0, totalAttended: 1, eligibleSessions: 1, attendancePercentage: 100 },
+        ],
+        totalCourses: 2,
+      },
+    };
+  },
   toggleFullscreen: async () => ({ isFullScreen: false }),
   isFullscreen: async () => ({ isFullScreen: false }),
 };

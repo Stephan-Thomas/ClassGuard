@@ -145,6 +145,41 @@ export class SqliteDatabaseClient {
         `);
       }
     } catch {}
+
+    // Ensure users table role check constraint supports ('STUDENT', 'ADMIN', 'SUPERADMIN')
+    try {
+      const userTableSql = this.queryOne<{ sql: string }>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+      );
+      if (userTableSql && userTableSql.sql && userTableSql.sql.includes('LECTURER')) {
+        this.exec(`
+          CREATE TABLE IF NOT EXISTS users_new (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('STUDENT', 'ADMIN', 'SUPERADMIN')),
+            full_name TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          INSERT OR IGNORE INTO users_new (id, username, email, password_hash, role, full_name, active, created_at, updated_at)
+          SELECT 
+            id, username, email, password_hash,
+            CASE 
+              WHEN email LIKE 'admin%' OR role = 'SUPERADMIN' THEN 'SUPERADMIN'
+              WHEN role = 'LECTURER' THEN 'ADMIN'
+              WHEN role = 'STUDENT' THEN 'STUDENT'
+              ELSE 'ADMIN'
+            END,
+            full_name, active, created_at, updated_at
+          FROM users;
+          DROP TABLE users;
+          ALTER TABLE users_new RENAME TO users;
+        `);
+      }
+    } catch {}
   }
 
   public close(): void {

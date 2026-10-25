@@ -388,7 +388,7 @@ export const LiveMonitorPage: React.FC = () => {
                       type="text"
                       value={studentSearch}
                       onChange={(e) => setStudentSearch(e.target.value)}
-                      placeholder="Search by matriculation (e.g. CSC/2021/001) or student name..."
+                      placeholder="Search by matriculation (e.g. 2022/241414) or student name..."
                       className="w-full pl-8 pr-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
                     />
                   </div>

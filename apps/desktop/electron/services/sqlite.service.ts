@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import bcrypt from 'bcryptjs';
 import { SqliteDatabaseClient } from './db-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,6 +47,11 @@ export class DesktopDatabaseService {
     if (this.initialized) return;
     await this.client.init();
     this.client.migrate();
+    this.initialized = true;
+  }
+
+  public setClient(client: SqliteDatabaseClient): void {
+    this.client = client;
     this.initialized = true;
   }
 
@@ -512,5 +518,143 @@ export class DesktopDatabaseService {
        LIMIT ?`,
       [limit]
     );
+  }
+
+  // --- Superadmin / Lecturer Management ---
+  public createLecturerUser(data: { staffId: string; fullName: string; email: string; department: string; password?: string }): { success: boolean; lecturer?: Lecturer; error?: string } {
+    try {
+      const existingLecturer = this.client.queryOne('SELECT id FROM lecturers WHERE email = ? OR staff_id = ?', [data.email.toLowerCase(), data.staffId.trim().toUpperCase()]);
+      if (existingLecturer) {
+        return { success: false, error: 'A lecturer with this email or staff ID already exists.' };
+      }
+      const existingUser = this.getUserByEmail(data.email);
+      if (existingUser) {
+        return { success: false, error: 'A user account with this email already exists.' };
+      }
+
+      const userId = `usr-lec-${Date.now()}`;
+      const lecturerId = `lec-${Date.now()}`;
+      const now = new Date().toISOString();
+      const password = data.password || 'Lecturer@123';
+      const passwordHash = bcrypt.hashSync(password, 10);
+      const username = data.email.split('@')[0] || `lec_${Date.now()}`;
+
+      // Insert user account with role ADMIN (Lecturer)
+      this.client.run(
+        `INSERT INTO users (id, username, email, password_hash, role, full_name, active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'ADMIN', ?, 1, ?, ?)`,
+        [userId, username, data.email.toLowerCase(), passwordHash, data.fullName, now, now]
+      );
+
+      // Insert lecturer record
+      this.client.run(
+        `INSERT INTO lecturers (id, staff_id, full_name, email, department, user_id, active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [lecturerId, data.staffId.trim().toUpperCase(), data.fullName, data.email.toLowerCase(), data.department, userId, now, now]
+      );
+
+      return {
+        success: true,
+        lecturer: this.client.queryOne('SELECT id, staff_id as staffId, full_name as fullName, email, department, user_id as userId, active, created_at as createdAt, updated_at as updatedAt FROM lecturers WHERE id = ?', [lecturerId]) ?? undefined,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  public toggleLecturerActive(lecturerId: string, active: boolean): boolean {
+    const now = new Date().toISOString();
+    const lecturer = this.client.queryOne('SELECT user_id as userId FROM lecturers WHERE id = ?', [lecturerId]);
+    this.client.run('UPDATE lecturers SET active = ?, updated_at = ? WHERE id = ?', [active ? 1 : 0, now, lecturerId]);
+    if (lecturer?.userId) {
+      this.client.run('UPDATE users SET active = ?, updated_at = ? WHERE id = ?', [active ? 1 : 0, now, lecturer.userId]);
+    }
+    return true;
+  }
+
+  public getSuperadminStats(): any {
+    const lecturers = this.client.queryOne('SELECT COUNT(*) as count FROM lecturers');
+    const courses = this.client.queryOne('SELECT COUNT(*) as count FROM courses');
+    const activeSessions = this.client.queryOne("SELECT COUNT(*) as count FROM attendance_sessions WHERE status = 'ACTIVE'");
+    const totalSessions = this.client.queryOne('SELECT COUNT(*) as count FROM attendance_sessions');
+    const auditLogs = this.client.queryOne('SELECT COUNT(*) as count FROM audit_logs');
+    const syncStatus = this.getSyncStatus();
+
+    return {
+      lecturersCount: lecturers?.count || 0,
+      coursesCount: courses?.count || 0,
+      activeSessionsCount: activeSessions?.count || 0,
+      totalSessionsCount: totalSessions?.count || 0,
+      auditLogsCount: auditLogs?.count || 0,
+      pendingSyncCount: syncStatus.pendingCount,
+      syncedCount: syncStatus.syncedCount,
+      deviceStatus: 'HEALTHY_LOCAL_STATION',
+    };
+  }
+
+  // --- Student Attendance History & Summary ---
+  public getStudentAttendanceHistory(matricNumber: string): AttendanceRecord[] {
+    const student = this.getStudentByMatric(matricNumber);
+    if (!student) return [];
+    return this.client.query(
+      `SELECT r.id, r.student_id as studentId, r.matric_number as matricNumber, r.student_name as studentName,
+              r.course_id as courseId, c.code as courseCode, r.session_id as sessionId, s.title as sessionTitle,
+              r.timestamp, r.status, r.verification_method as verificationMethod,
+              r.similarity_score as similarityScore, r.sync_status as syncStatus, r.created_at as createdAt
+       FROM attendance_records r
+       LEFT JOIN courses c ON r.course_id = c.id
+       LEFT JOIN attendance_sessions s ON r.session_id = s.id
+       WHERE r.student_id = ?
+       ORDER BY r.timestamp DESC`,
+      [student.id]
+    );
+  }
+
+  public getStudentAttendanceSummary(matricNumber: string): any {
+    const student = this.getStudentByMatric(matricNumber);
+    if (!student) return null;
+
+    const enrollments = this.client.query(
+      `SELECT e.course_id as courseId, c.code as courseCode, c.title as courseTitle
+       FROM enrollments e
+       JOIN courses c ON e.course_id = c.id
+       WHERE e.student_id = ? AND e.status = 'ENROLLED'`,
+      [student.id]
+    );
+
+    const records = this.client.query(
+      `SELECT course_id as courseId, status FROM attendance_records WHERE student_id = ?`,
+      [student.id]
+    );
+
+    const summaries = enrollments.map((e: any) => {
+      const closedSessions = this.client.query(
+        `SELECT id FROM attendance_sessions WHERE course_id = ? AND status = 'CLOSED'`,
+        [e.courseId]
+      );
+      const studentRecords = records.filter((r: any) => r.courseId === e.courseId);
+      const presentCount = studentRecords.filter((r: any) => r.status === 'PRESENT').length;
+      const lateCount = studentRecords.filter((r: any) => r.status === 'LATE').length;
+      const totalAttended = presentCount + lateCount;
+      const eligible = closedSessions.length;
+      const percentage = eligible > 0 ? Math.min(100, Math.round((totalAttended / eligible) * 100)) : 100;
+
+      return {
+        courseId: e.courseId,
+        courseCode: e.courseCode,
+        courseTitle: e.courseTitle,
+        presentCount,
+        lateCount,
+        totalAttended,
+        eligibleSessions: eligible,
+        attendancePercentage: percentage,
+      };
+    });
+
+    return {
+      student,
+      courseSummaries: summaries,
+      totalCourses: enrollments.length,
+    };
   }
 }

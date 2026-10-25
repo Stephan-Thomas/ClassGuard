@@ -10,7 +10,7 @@ coursesRouter.use(authenticate);
 coursesRouter.get('/', async (req: AuthRequest, res: Response) => {
   try {
     const filter: Record<string, any> = { active: true };
-    if (req.user?.role === 'LECTURER') {
+    if (req.user?.role === 'ADMIN') {
       const lecturer: any = await LecturerModel.findOne({ email: req.user.email });
       if (lecturer) {
         filter.lecturerId = lecturer._id;
@@ -43,7 +43,7 @@ coursesRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
-coursesRouter.post('/', authorize('ADMIN'), async (req: AuthRequest, res: Response) => {
+coursesRouter.post('/', authorize('ADMIN', 'SUPERADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const parsed = CourseCreateSchema.safeParse(req.body);
     if (!parsed.success) {

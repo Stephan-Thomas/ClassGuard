@@ -1,6 +1,13 @@
-export type UserRole = 'ADMIN' | 'LECTURER';
+export type UserRole = 'STUDENT' | 'ADMIN' | 'SUPERADMIN';
+
+export interface AuthSession {
+  token: string;
+  user: User;
+  expiresAt: number; // epoch ms
+}
 
 export type SessionStatus = 'SCHEDULED' | 'ACTIVE' | 'CLOSED' | 'CANCELLED';
+
 
 export type AttendanceStatus = 'PRESENT' | 'LATE' | 'ABSENT' | 'EXCUSED';
 

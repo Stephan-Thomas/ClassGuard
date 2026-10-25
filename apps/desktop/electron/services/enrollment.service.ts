@@ -2,6 +2,7 @@ import {
   Student,
   createStudentQRCredential,
   generateSyntheticEmbedding,
+  isValidMatricNumber,
 } from '@classguard/shared';
 import { DesktopDatabaseService } from './sqlite.service.js';
 
@@ -56,11 +57,19 @@ export class EnrollmentService {
     courseIds?: string[];
   }): Promise<{ success: boolean; student?: Student; message: string }> {
     try {
-      const existing = this.db.getStudentByMatric(data.matricNumber);
+      const trimmedMatric = data.matricNumber ? data.matricNumber.trim() : '';
+      if (!isValidMatricNumber(trimmedMatric)) {
+        return {
+          success: false,
+          message: `Invalid matriculation number "${trimmedMatric}". Must strictly match format 2xxx/2xxxxx (e.g. 2022/241414).`,
+        };
+      }
+
+      const existing = this.db.getStudentByMatric(trimmedMatric);
       if (existing) {
         return {
           success: false,
-          message: `A student with matriculation number ${data.matricNumber.toUpperCase()} is already registered.`,
+          message: `A student with matriculation number ${trimmedMatric} is already registered.`,
         };
       }
 

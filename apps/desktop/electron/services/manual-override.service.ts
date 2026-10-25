@@ -54,7 +54,7 @@ export class ManualAttendanceOverrideService {
       if (!lecturer) {
         // Check if lecturerId belongs to an authorized admin or staff user
         const staffUsers = this.db.getUsers ? this.db.getUsers() : [];
-        const staffUser = staffUsers.find((u: any) => u.id === params.lecturerId && (u.role === 'ADMIN' || u.role === 'LECTURER'));
+        const staffUser = staffUsers.find((u: any) => u.id === params.lecturerId && (u.role === 'ADMIN' || u.role === 'SUPERADMIN'));
         if (!staffUser) {
           return {
             authorized: false,

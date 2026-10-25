@@ -1,12 +1,22 @@
 import { z } from 'zod';
 
+export const MATRIC_NUMBER_REGEX = /^2\d{3}\/2\d{5}$/;
+
+export function isValidMatricNumber(matric: string): boolean {
+  if (!matric || typeof matric !== 'string') return false;
+  return MATRIC_NUMBER_REGEX.test(matric.trim());
+}
+
 export const LoginSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
 export const StudentCreateSchema = z.object({
-  matricNumber: z.string().min(3).max(30).trim(),
+  matricNumber: z
+    .string()
+    .trim()
+    .regex(MATRIC_NUMBER_REGEX, 'Matriculation number must match format 2xxx/2xxxxx (e.g. 2022/241414)'),
   fullName: z.string().min(2).max(120).trim(),
   department: z.string().min(2).max(100).trim(),
   level: z.string().min(2).max(20).trim(),

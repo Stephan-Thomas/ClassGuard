@@ -1,12 +1,36 @@
 import * as faceapi from '@vladmandic/face-api';
-import { generateSyntheticEmbedding, perturbEmbedding, verifyFace1to1 } from '@classguard/shared';
 
 let modelsLoaded = false;
 let modelLoadingPromise: Promise<boolean> | null = null;
 
+export interface FaceExtractionResult {
+  success: boolean;
+  embedding?: number[];
+  box?: { x: number; y: number; width: number; height: number };
+  landmarks?: faceapi.FaceLandmarks68;
+  score?: number;
+  error?: 'NO_FACE_DETECTED' | 'MULTIPLE_FACES' | 'FACE_TOO_FAR' | 'MODEL_UNAVAILABLE' | 'VIDEO_NOT_READY' | 'EXTRACTION_ERROR';
+  message?: string;
+}
+
+/**
+ * Determine local path for offline model files.
+ * Works seamlessly in Vite development (HTTP) and packaged Electron (file://).
+ */
+function getLocalModelUri(): string {
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+    return '/models';
+  }
+  if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+    const currentHref = window.location.href;
+    const baseDir = currentHref.substring(0, currentHref.lastIndexOf('/') + 1);
+    return `${baseDir}models`;
+  }
+  return '/models';
+}
+
 export class FaceRecognitionService {
   private static instance: FaceRecognitionService;
-  private modelPath = '/models';
 
   public static getInstance(): FaceRecognitionService {
     if (!FaceRecognitionService.instance) {
@@ -17,7 +41,8 @@ export class FaceRecognitionService {
 
   /**
    * Load local offline neural network models for face detection,
-   * landmarks, and embedding generation.
+   * landmarks, and 128D feature embedding extraction.
+   * Never calls external CDNs or remote APIs.
    */
   public async loadModels(): Promise<boolean> {
     if (modelsLoaded) return true;
@@ -25,27 +50,38 @@ export class FaceRecognitionService {
 
     modelLoadingPromise = (async () => {
       try {
-        console.log('[FaceService] Initializing face-api.js neural networks...');
-        // Set up TensorFlow environment
+        console.log('[FaceService] Loading offline local facial recognition models...');
+
+        // Initialize TensorFlow backend (WebGL preferred with fallback to CPU)
         if ((faceapi.tf as any)?.setBackend) {
-          await (faceapi.tf as any).setBackend('webgl').catch(() => (faceapi.tf as any).setBackend('cpu'));
+          try {
+            await (faceapi.tf as any).setBackend('webgl');
+          } catch {
+            await (faceapi.tf as any).setBackend('cpu');
+          }
           if ((faceapi.tf as any).ready) await (faceapi.tf as any).ready();
         }
 
-        // Load models from public directory or CDN fallback if local weights are not bundled yet
-        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+        const modelUri = getLocalModelUri();
+        console.log(`[FaceService] Loading local models from: ${modelUri}`);
+
+        // Load strictly from bundled local model weights and manifests
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+          faceapi.nets.tinyFaceDetector.loadFromUri(modelUri),
+          faceapi.nets.faceLandmark68Net.loadFromUri(modelUri),
+          faceapi.nets.faceRecognitionNet.loadFromUri(modelUri),
         ]);
 
         modelsLoaded = true;
-        console.log('[FaceService] Local face models loaded successfully.');
+        console.log('[FaceService] Local neural network models loaded successfully and ready for offline inference.');
         return true;
       } catch (err: any) {
-        console.warn('[FaceService] Notice: WebGL model load failed or offline:', err.message);
-        return false;
+        modelsLoaded = false;
+        modelLoadingPromise = null;
+        console.error('[FaceService] Critical: Local model initialization failed:', err);
+        throw new Error(
+          `Local facial recognition models could not be loaded from ${getLocalModelUri()}. Ensure offline model files exist in public/models. Details: ${err.message}`
+        );
       }
     })();
 
@@ -53,37 +89,101 @@ export class FaceRecognitionService {
   }
 
   /**
-   * Extract 128-dimensional facial representation from a video or canvas element.
+   * Extract actual 128-dimensional L2-normalized facial representation from video or canvas.
+   * Enforces single-face detection, adequate framing, and returns descriptive errors on failure.
    */
   public async extractFaceEmbedding(
     element: HTMLVideoElement | HTMLCanvasElement
-  ): Promise<{ embedding: number[]; box?: any; landmarks?: any } | null> {
+  ): Promise<FaceExtractionResult> {
     try {
-      const isReady = await this.loadModels();
-      if (!isReady) {
-        return null;
+      // Validate element readiness
+      if (element instanceof HTMLVideoElement) {
+        if (element.readyState < 2 || element.videoWidth === 0 || element.videoHeight === 0) {
+          return {
+            success: false,
+            error: 'VIDEO_NOT_READY',
+            message: 'Camera video stream is not yet ready. Please wait a moment for the feed to initialize.',
+          };
+        }
       }
 
-      const detection = await faceapi
-        .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+      const isReady = await this.loadModels();
+      if (!isReady) {
+        return {
+          success: false,
+          error: 'MODEL_UNAVAILABLE',
+          message: 'Facial recognition neural network models are not initialized.',
+        };
+      }
 
-      if (!detection) return null;
+      // Detect ALL faces to prevent multi-person ambiguity during biometric capture
+      const detections = await faceapi
+        .detectAllFaces(
+          element,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      if (!detections || detections.length === 0) {
+        return {
+          success: false,
+          error: 'NO_FACE_DETECTED',
+          message: 'No face detected. Please center your face directly in the camera viewfinder with adequate lighting.',
+        };
+      }
+
+      if (detections.length > 1) {
+        return {
+          success: false,
+          error: 'MULTIPLE_FACES',
+          message: `Multiple faces (${detections.length}) detected in frame. Only one student face may be present during verification.`,
+        };
+      }
+
+      const single = detections[0];
+      const box = single.detection.box;
+
+      // Reject faces that are too small or far away
+      if (box.width < 90 || box.height < 90) {
+        return {
+          success: false,
+          error: 'FACE_TOO_FAR',
+          message: 'Face is positioned too far from the camera. Please move closer to fill the guide frame.',
+        };
+      }
+
+      // Descriptor is 128 Float32 values; convert to standard JS number array
+      const descriptor = Array.from(single.descriptor);
+      if (descriptor.length !== 128) {
+        return {
+          success: false,
+          error: 'EXTRACTION_ERROR',
+          message: `Unexpected descriptor dimension (${descriptor.length}); expected 128D vector.`,
+        };
+      }
 
       return {
-        embedding: Array.from(detection.descriptor),
-        box: detection.detection.box,
-        landmarks: detection.landmarks,
+        success: true,
+        embedding: descriptor,
+        box: { x: box.x, y: box.y, width: box.width, height: box.height },
+        landmarks: single.landmarks,
+        score: single.detection.score,
       };
     } catch (err: any) {
-      console.warn('[FaceService] Extraction error:', err.message);
-      return null;
+      console.error('[FaceService] Extraction error:', err);
+      return {
+        success: false,
+        error: 'EXTRACTION_ERROR',
+        message: err.message || 'An error occurred during facial feature extraction.',
+      };
     }
   }
 
   /**
    * Basic presentation attack detection heuristic (Eye Aspect Ratio for blinks).
+   * Note: This heuristic verifies dynamic facial movement but does NOT eliminate
+   * high-fidelity physical silicone masks or sophisticated 3D replay attacks.
    */
   public detectEyeBlink(landmarks: faceapi.FaceLandmarks68): boolean {
     if (!landmarks) return false;
@@ -103,18 +203,5 @@ export class FaceRecognitionService {
 
     // EAR < 0.22 typically indicates eyes closed in a blink
     return avgEAR < 0.22;
-  }
-
-  /**
-   * Test/Demo Biometric Provider for offline automated tests or camera-less demo environments.
-   * Clearly marked so it is never misrepresented as actual real facial recognition.
-   */
-  public getSimulatedEmbedding(studentMatric: string, shouldMatch = true): number[] {
-    const base = generateSyntheticEmbedding(studentMatric);
-    if (shouldMatch) {
-      return perturbEmbedding(base, 0.04); // high similarity
-    } else {
-      return generateSyntheticEmbedding(`DIFFERENT_PERSON_${Date.now()}`); // low similarity
-    }
   }
 }

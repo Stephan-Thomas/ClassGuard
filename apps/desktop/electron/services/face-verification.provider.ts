@@ -53,12 +53,21 @@ export class FaceVerificationProvider {
         };
       }
 
-      // 2. Automated test simulation hook (strictly for headless automated test suite)
+      // 2. Automated test simulation hook (strictly isolated for automated headless test suite)
       if (params.testSimulatedMatch) {
+        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+          return {
+            success: false,
+            statusCode: 'ERROR',
+            similarityScore: 0,
+            threshold,
+            message: 'Synthetic biometric simulation is strictly disabled in production attendance workflows.',
+          };
+        }
         return {
           success: true,
           statusCode: 'MATCH',
-          similarityScore: 96,
+          similarityScore: 0.15,
           threshold,
           message: 'Automated test simulated biometric match succeeded.',
         };
