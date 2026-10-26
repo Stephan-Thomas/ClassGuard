@@ -190,12 +190,24 @@ export class AttendanceService {
         threshold: params.threshold,
       });
 
-      if (!faceResult.success) {
-        // Failed verification attempts do NOT mark student absent
+      if (!faceResult.success || faceResult.statusCode !== 'MATCH') {
+        const statusCode =
+          faceResult.statusCode === 'MISMATCH' || faceResult.statusCode === 'FACE_MISMATCH'
+            ? 'FACE_MISMATCH'
+            : faceResult.statusCode;
+
         return {
           success: false,
-          statusCode: faceResult.statusCode as any,
-          message: faceResult.message,
+          statusCode: statusCode as any,
+          message:
+            faceResult.message ||
+            (statusCode === 'FACE_MISMATCH'
+              ? 'Face does not match the enrolled student. Attendance was not recorded.'
+              : statusCode === 'NO_FACE_ENROLLED'
+              ? 'No facial profile found for this student. Please contact your lecturer.'
+              : statusCode === 'NO_FACE_DETECTED'
+              ? 'No face detected. Please position your face in front of the camera.'
+              : 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.'),
           studentName: student.fullName,
           matricNumber: student.matricNumber,
           similarityScore: faceResult.similarityScore,
@@ -241,7 +253,7 @@ export class AttendanceService {
       return {
         success: true,
         statusCode: 'SUCCESS',
-        message: `Attendance marked successfully via Facial Verification: ${status}!`,
+        message: 'Face verified successfully. Attendance recorded successfully.',
         record,
         studentName: student.fullName,
         matricNumber: student.matricNumber,
@@ -252,10 +264,11 @@ export class AttendanceService {
         timestamp: checkInTime.toISOString(),
       };
     } catch (err: any) {
+      console.error('[AttendanceService] Unexpected facial attendance error:', err.message || err);
       return {
         success: false,
         statusCode: 'ERROR',
-        message: `Facial attendance processing error: ${err.message}`,
+        message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
       };
     }
   }

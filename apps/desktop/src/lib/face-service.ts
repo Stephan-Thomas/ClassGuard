@@ -102,7 +102,7 @@ export class FaceRecognitionService {
           return {
             success: false,
             error: 'VIDEO_NOT_READY',
-            message: 'Camera video stream is not yet ready. Please wait a moment for the feed to initialize.',
+            message: 'Unable to access the camera. Check camera permissions and try again.',
           };
         }
       }
@@ -112,7 +112,7 @@ export class FaceRecognitionService {
         return {
           success: false,
           error: 'MODEL_UNAVAILABLE',
-          message: 'Facial recognition neural network models are not initialized.',
+          message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
         };
       }
 
@@ -129,7 +129,7 @@ export class FaceRecognitionService {
         return {
           success: false,
           error: 'NO_FACE_DETECTED',
-          message: 'No face detected. Please center your face directly in the camera viewfinder with adequate lighting.',
+          message: 'No face detected. Please position your face in front of the camera.',
         };
       }
 
@@ -137,7 +137,7 @@ export class FaceRecognitionService {
         return {
           success: false,
           error: 'MULTIPLE_FACES',
-          message: `Multiple faces (${detections.length}) detected in frame. Only one student face may be present during verification.`,
+          message: 'Multiple faces detected. Please ensure only the student being verified is visible.',
         };
       }
 
@@ -159,7 +159,7 @@ export class FaceRecognitionService {
         return {
           success: false,
           error: 'EXTRACTION_ERROR',
-          message: `Unexpected descriptor dimension (${descriptor.length}); expected 128D vector.`,
+          message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
         };
       }
 
@@ -175,7 +175,7 @@ export class FaceRecognitionService {
       return {
         success: false,
         error: 'EXTRACTION_ERROR',
-        message: err.message || 'An error occurred during facial feature extraction.',
+        message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
       };
     }
   }

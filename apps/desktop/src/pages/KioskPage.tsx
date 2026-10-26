@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import jsQR from 'jsqr';
 import { api } from '../lib/api-client';
 import { FaceRecognitionService } from '../lib/face-service';
-import { Student, AttendanceSession, isValidMatricNumber } from '@classguard/shared';
+import { Student, AttendanceSession, isValidMatricNumber, getFriendlyFaceErrorMessage } from '@classguard/shared';
 import {
   Tv,
   QrCode,
@@ -146,7 +146,8 @@ export const KioskPage: React.FC = () => {
         qrScanTimerRef.current = window.setInterval(onFrame, 200);
       }
     } catch (err: any) {
-      setVerificationFeedback('Webcam access was denied or hardware not found.');
+      console.error('[Kiosk Camera] Camera access error:', err.message || err);
+      setVerificationFeedback('Unable to access the camera. Check camera permissions and try again.');
     }
   };
 
@@ -209,7 +210,7 @@ export const KioskPage: React.FC = () => {
         // If student has no facial biometrics enrolled, direct immediately to QR fallback
         if (!stu.hasFaceEnrolled) {
           setVerificationFeedback(
-            `Notice: No facial biometric template is enrolled for ${stu.fullName}. Please present your student QR credential card.`
+            'No facial profile found for this student. Please contact your lecturer.'
           );
           setStep('QR_FALLBACK');
           startCamera(scanQrCodeFrame);
@@ -224,7 +225,8 @@ export const KioskPage: React.FC = () => {
         setMatricError(`Student with matriculation number "${cleanMatric}" was not found.`);
       }
     } catch (err: any) {
-      setMatricError(err.message || 'Error looking up student record.');
+      console.error('[KioskPage] Student lookup error:', err.message || err);
+      setMatricError('Error looking up student record.');
     } finally {
       setIsVerifying(false);
     }
@@ -244,7 +246,8 @@ export const KioskPage: React.FC = () => {
         setIsVerifying(false);
         const newAttempts = faceAttempts + 1;
         setFaceAttempts(newAttempts);
-        setVerificationFeedback(faceResult.message || 'No clear face detected in frame.');
+        const friendlyFeedback = getFriendlyFaceErrorMessage(faceResult.error);
+        setVerificationFeedback(friendlyFeedback);
         return;
       }
 
@@ -270,7 +273,8 @@ export const KioskPage: React.FC = () => {
       } else {
         const newAttempts = faceAttempts + 1;
         setFaceAttempts(newAttempts);
-        setVerificationFeedback(res.message);
+        const friendlyFeedback = getFriendlyFaceErrorMessage(res.statusCode);
+        setVerificationFeedback(friendlyFeedback);
 
         // If duplicate record
         if (res.statusCode === 'ALREADY_MARKED') {
@@ -281,8 +285,9 @@ export const KioskPage: React.FC = () => {
         }
       }
     } catch (err: any) {
+      console.error('[KioskPage] Unexpected facial verification error:', err.message || err);
       setIsVerifying(false);
-      setVerificationFeedback(`Face verification error: ${err.message}`);
+      setVerificationFeedback('Facial verification is temporarily unavailable. Please try again or use an authorized alternative.');
     }
   };
 
@@ -643,7 +648,15 @@ export const KioskPage: React.FC = () => {
                   'Attendance Verification Failed'
                 )}
               </h2>
-              <p className="text-xs text-zinc-300 mt-2 max-w-sm mx-auto">{resultMessage}</p>
+
+              {resultSuccess && verificationMethod === 'FACE_VERIFIED' && (
+                <div className="mt-2 text-xs font-semibold text-emerald-400">
+                  Face verified successfully
+                </div>
+              )}
+              <p className="text-xs text-zinc-300 mt-2 max-w-sm mx-auto">
+                {resultSuccess ? 'Attendance recorded successfully.' : resultMessage}
+              </p>
 
               {resultSuccess && verificationMethod && (
                 <div className="mt-3 inline-block px-3 py-1 rounded-full bg-zinc-800 text-[10px] font-mono text-zinc-400 border border-zinc-700">

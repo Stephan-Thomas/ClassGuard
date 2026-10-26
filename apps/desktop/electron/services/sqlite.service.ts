@@ -209,9 +209,21 @@ export class DesktopDatabaseService {
       [studentId]
     );
     if (!row) return null;
+    let embedding: number[] | null = null;
+    if (typeof row.embedding === 'string') {
+      try {
+        embedding = JSON.parse(row.embedding);
+      } catch {
+        console.error(`[SQLite] Corrupted face template JSON for studentId: ${studentId}`);
+        embedding = null;
+      }
+    } else if (Array.isArray(row.embedding)) {
+      embedding = row.embedding;
+    }
+
     return {
       ...row,
-      embedding: typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding,
+      embedding: embedding as any,
     };
   }
 

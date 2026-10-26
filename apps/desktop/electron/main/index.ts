@@ -20,7 +20,7 @@ async function createWindow() {
     backgroundColor: '#090a0f',
     title: 'ClassGuard - Student Attendance Tracking & Monitoring System',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,

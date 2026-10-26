@@ -11,7 +11,7 @@ export interface FaceVerificationParams {
 
 export interface ProviderFaceResult {
   success: boolean;
-  statusCode: 'MATCH' | 'MISMATCH' | 'NO_FACE_ENROLLED' | 'CAMERA_UNAVAILABLE' | 'NO_FACE_DETECTED' | 'ERROR';
+  statusCode: 'MATCH' | 'MISMATCH' | 'FACE_MISMATCH' | 'NO_FACE_ENROLLED' | 'CAMERA_UNAVAILABLE' | 'NO_FACE_DETECTED' | 'ERROR';
   similarityScore: number;
   threshold: number;
   message: string;
@@ -43,13 +43,41 @@ export class FaceVerificationProvider {
 
       // 1. Retrieve enrolled biometric template
       const template = this.db.getFaceTemplateByStudentId(params.studentId);
-      if (!template || !template.embedding || template.embedding.length === 0) {
+      if (!template) {
+        console.log(`[FaceProvider] No face template found for studentId: ${params.studentId} (${params.matricNumber})`);
         return {
           success: false,
           statusCode: 'NO_FACE_ENROLLED',
           similarityScore: 0,
           threshold,
-          message: `Student (${params.matricNumber}) does not have an enrolled facial representation. Please use QR fallback or proceed to enrollment.`,
+          message: 'No facial profile found for this student. Please contact your lecturer.',
+        };
+      }
+
+      // Verify that template strictly matches the requested student identity
+      if (template.matricNumber && params.matricNumber) {
+        const enrolledMatric = template.matricNumber.trim().toUpperCase();
+        const requestedMatric = params.matricNumber.trim().toUpperCase();
+        if (enrolledMatric !== requestedMatric) {
+          console.error(`[FaceProvider] Identity mismatch: enrolled=${enrolledMatric}, requested=${requestedMatric}`);
+          return {
+            success: false,
+            statusCode: 'ERROR',
+            similarityScore: 0,
+            threshold,
+            message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
+          };
+        }
+      }
+
+      if (!Array.isArray(template.embedding) || template.embedding.length !== 128) {
+        console.error(`[FaceProvider] Corrupted template for studentId: ${params.studentId}`);
+        return {
+          success: false,
+          statusCode: 'ERROR',
+          similarityScore: 0,
+          threshold,
+          message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
         };
       }
 
@@ -69,18 +97,24 @@ export class FaceVerificationProvider {
           statusCode: 'MATCH',
           similarityScore: 0.15,
           threshold,
-          message: 'Automated test simulated biometric match succeeded.',
+          message: 'Face verified successfully',
         };
       }
 
       // 3. Validate captured embedding
-      if (!params.capturedEmbedding || params.capturedEmbedding.length !== 128) {
+      if (
+        !params.capturedEmbedding ||
+        !Array.isArray(params.capturedEmbedding) ||
+        params.capturedEmbedding.length !== 128 ||
+        !params.capturedEmbedding.every((v) => typeof v === 'number' && Number.isFinite(v))
+      ) {
+        console.warn(`[FaceProvider] Invalid or missing captured embedding for student: ${params.matricNumber}`);
         return {
           success: false,
           statusCode: 'NO_FACE_DETECTED',
           similarityScore: 0,
           threshold,
-          message: 'No valid 128D facial embedding was captured from the camera feed.',
+          message: 'No face detected. Please position your face in front of the camera.',
         };
       }
 
@@ -92,31 +126,34 @@ export class FaceVerificationProvider {
       );
 
       if (matchResult.success) {
+        console.log(`[FaceProvider] Biometric match confirmed (score: ${matchResult.similarityScore}, threshold: ${threshold})`);
         return {
           success: true,
           statusCode: 'MATCH',
           similarityScore: matchResult.similarityScore,
           threshold,
-          message: `Facial verification successful (${matchResult.similarityScore}% match).`,
+          message: 'Face verified successfully',
           details: matchResult.details,
         };
       } else {
+        console.log(`[FaceProvider] Biometric mismatch evaluated (score: ${matchResult.similarityScore}, threshold: ${threshold})`);
         return {
           success: false,
-          statusCode: 'MISMATCH',
+          statusCode: 'FACE_MISMATCH',
           similarityScore: matchResult.similarityScore,
           threshold,
-          message: `Facial verification unsuccessful: Biometric distance exceeded threshold (${matchResult.similarityScore}% similarity).`,
+          message: 'Face does not match the enrolled student. Attendance was not recorded.',
           details: matchResult.details,
         };
       }
     } catch (err: any) {
+      console.error('[FaceProvider] Unexpected verification error:', err.message || err);
       return {
         success: false,
         statusCode: 'ERROR',
         similarityScore: 0,
         threshold: DEFAULT_EUCLIDEAN_THRESHOLD,
-        message: `Face verification error: ${err.message || 'unknown error'}`,
+        message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
       };
     }
   }

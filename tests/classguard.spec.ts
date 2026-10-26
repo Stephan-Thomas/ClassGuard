@@ -19,17 +19,20 @@ import {
   isValidMatricNumber,
   MATRIC_NUMBER_REGEX,
   UserRole,
+  getFriendlyFaceErrorMessage,
 } from '@classguard/shared';
 import { SqliteDatabaseClient } from '../database/db-client.js';
 import { DesktopDatabaseService } from '../apps/desktop/electron/services/sqlite.service.js';
 import { DesktopSessionService } from '../apps/desktop/electron/services/session.service.js';
 import { FaceVerificationProvider } from '../apps/desktop/electron/services/face-verification.provider.js';
+import { AttendanceService } from '../apps/desktop/electron/services/attendance.service.js';
 
 describe('ClassGuard Complete Verification & Security Test Suite', () => {
   const testDbPath = path.resolve(process.cwd(), 'database', 'test_classguard.sqlite');
   let db: SqliteDatabaseClient;
   let sessionManager: DesktopSessionService;
   let faceProvider: FaceVerificationProvider;
+  let attendanceService: AttendanceService;
 
   beforeEach(async () => {
     if (fs.existsSync(testDbPath)) {
@@ -44,6 +47,7 @@ describe('ClassGuard Complete Verification & Security Test Suite', () => {
     DesktopDatabaseService.getInstance().setClient(db);
     sessionManager = DesktopSessionService.getInstance();
     faceProvider = FaceVerificationProvider.getInstance();
+    attendanceService = AttendanceService.getInstance();
 
     const now = new Date().toISOString();
 
@@ -395,53 +399,198 @@ describe('ClassGuard Complete Verification & Security Test Suite', () => {
       expect(parsed).toHaveLength(128);
     });
 
-    it('should verify a face and mark attendance as FACE_VERIFIED without requiring QR scanning', () => {
+    it('should verify genuine face capture and mark attendance as FACE_VERIFIED with success feedback', async () => {
       const student = db.queryOne('SELECT * FROM students WHERE matric_number = ?', ['2022/241414']);
       expect(student).not.toBeNull();
 
       const templateRow = db.queryOne('SELECT * FROM face_templates WHERE student_id = ?', [student.id]);
       const enrolledEmbedding = JSON.parse(templateRow.embedding);
 
-      // Live capture perturbed within threshold
-      const liveCaptured = perturbEmbedding(enrolledEmbedding, 0.04);
-      const match = verifyFace1to1(liveCaptured, enrolledEmbedding, DEFAULT_EUCLIDEAN_THRESHOLD);
-      expect(match.success).toBe(true);
-      expect(match.similarityScore).toBeLessThanOrEqual(DEFAULT_EUCLIDEAN_THRESHOLD);
+      // Live capture of the enrolled person with natural variations
+      const genuineCapture = perturbEmbedding(enrolledEmbedding, 0.05);
 
-      // Record attendance directly with method FACE_VERIFIED
-      const now = new Date().toISOString();
-      db.run(
-        `INSERT INTO attendance_records (id, student_id, matric_number, student_name, course_id, session_id, timestamp, status, verification_method, similarity_score, kiosk_id, sync_status, created_at)
-         VALUES ('rec-face-01', ?, ?, ?, 'crs-403', 'ses-active-01', ?, 'PRESENT', 'FACE_VERIFIED', ?, 'KIOSK-01', 'PENDING', ?)`,
-        [student.id, student.matric_number, student.full_name, now, match.similarityScore, now]
-      );
+      const res = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: genuineCapture,
+      });
 
-      const record = db.queryOne('SELECT * FROM attendance_records WHERE id = ?', ['rec-face-01']);
+      expect(res.success).toBe(true);
+      expect(res.statusCode).toBe('SUCCESS');
+      expect(res.verificationMethod).toBe('FACE_VERIFIED');
+      expect(res.similarityScore).toBeLessThanOrEqual(DEFAULT_EUCLIDEAN_THRESHOLD);
+      expect(res.message).toContain('Face verified successfully');
+      expect(res.message).toContain('Attendance recorded successfully');
+
+      // Confirm record exists in SQLite
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', [student.id]);
       expect(record).not.toBeNull();
       expect(record.verification_method).toBe('FACE_VERIFIED');
-      expect(record.status).toBe('PRESENT');
+      expect(['PRESENT', 'LATE']).toContain(record.status);
     });
 
-    it('should reject non-matching face and offer QR fallback after failed attempts', () => {
-      const templateRow = db.queryOne('SELECT * FROM face_templates WHERE student_id = ?', ['stu-test-01']);
-      const enrolledEmbedding = JSON.parse(templateRow.embedding);
+    it('should reject attendance attempt using a different person\'s face with user-friendly mismatch message and NEVER create attendance record', async () => {
+      // Impostor (different person's face)
+      const impostorEmbedding = generateSyntheticEmbedding('ANOTHER_PERSON_DIFFERENT_FACE');
 
-      const impostorEmbedding = generateSyntheticEmbedding('UNKNOWN_PERSON_IMPOSTOR');
-      const match = verifyFace1to1(impostorEmbedding, enrolledEmbedding, DEFAULT_EUCLIDEAN_THRESHOLD);
+      const res = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: impostorEmbedding,
+      });
 
-      expect(match.success).toBe(false);
+      // Must fail closed with friendly user message
+      expect(res.success).toBe(false);
+      expect(['MISMATCH', 'FACE_MISMATCH']).toContain(res.statusCode);
+      expect(res.message).toBe('Face does not match the enrolled student. Attendance was not recorded.');
+      // Ensure no raw technical distance or threshold leaked to user message
+      expect(res.message).not.toMatch(/threshold/i);
+      expect(res.message).not.toMatch(/distance/i);
 
-      // Ensure no attendance record was created
+      // CRITICAL: Ensure NO attendance record was created in the database
       const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-01']);
       expect(record).toBeNull();
     });
 
-    it('should gracefully handle student with no enrolled template and offer QR fallback', () => {
+    it('should return user-friendly message when student has no facial profile enrolled', async () => {
       const student2 = db.queryOne('SELECT * FROM students WHERE matric_number = ?', ['2022/241415']);
       expect(student2.has_face_enrolled).toBe(0);
 
-      const template = db.queryOne('SELECT * FROM face_templates WHERE student_id = ?', [student2.id]);
-      expect(template).toBeNull();
+      const capture = generateSyntheticEmbedding('ANY_FACE');
+      const res = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241415',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: capture,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.statusCode).toBe('NO_FACE_ENROLLED');
+      expect(res.message).toBe('No facial profile found for this student. Please contact your lecturer.');
+
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-02']);
+      expect(record).toBeNull();
+    });
+
+    it('should return user-friendly message when no face is detected in frame', async () => {
+      // Missing or invalid length captured vector
+      const shortVec = Array(50).fill(0.1);
+      const res1 = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: shortVec,
+      });
+      expect(res1.success).toBe(false);
+      expect(res1.statusCode).toBe('NO_FACE_DETECTED');
+      expect(res1.message).toBe('No face detected. Please position your face in front of the camera.');
+
+      // No attendance record created
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-01']);
+      expect(record).toBeNull();
+    });
+
+    it('should handle camera failure and multiple faces with structured user-friendly messages', () => {
+      // Camera failure translation
+      expect(getFriendlyFaceErrorMessage('CAMERA_UNAVAILABLE')).toBe(
+        'Unable to access the camera. Check camera permissions and try again.'
+      );
+      expect(getFriendlyFaceErrorMessage('VIDEO_NOT_READY')).toBe(
+        'Unable to access the camera. Check camera permissions and try again.'
+      );
+
+      // Multiple faces translation
+      expect(getFriendlyFaceErrorMessage('MULTIPLE_FACES')).toBe(
+        'Multiple faces detected. Please ensure only the student being verified is visible.'
+      );
+    });
+
+    it('should fail closed with user-friendly message on unexpected verification failure without exposing stack traces or database errors', async () => {
+      // Corrupt template in SQLite
+      db.run("UPDATE face_templates SET embedding = 'CORRUPTED_JSON_NOT_ARRAY' WHERE student_id = 'stu-test-01'");
+
+      const capture = generateSyntheticEmbedding('2022/241414');
+      const res = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: capture,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.statusCode).toBe('ERROR');
+      expect(res.message).toBe(
+        'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.'
+      );
+      // Ensure no raw database stack trace or internal error leaked
+      expect(res.message).not.toMatch(/SQLITE|JSON|at /i);
+
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-01']);
+      expect(record).toBeNull();
+    });
+
+    it('should reject malformed captured embeddings (NaN, non-finite, degenerate zero vectors)', async () => {
+      // NaN values
+      const nanVec = Array(128).fill(NaN);
+      const res = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: nanVec,
+      });
+      expect(res.success).toBe(false);
+      expect(res.statusCode).toBe('NO_FACE_DETECTED');
+      expect(res.message).toBe('No face detected. Please position your face in front of the camera.');
+
+      // All zero degenerate vector
+      const zeroVec = Array(128).fill(0);
+      const res2 = await faceProvider.verifyFace({
+        studentId: 'stu-test-01',
+        matricNumber: '2022/241414',
+        capturedEmbedding: zeroVec,
+      });
+      expect(res2.success).toBe(false);
+
+      // No records created
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-01']);
+      expect(record).toBeNull();
+    });
+
+    it('should reject verification if template matric number does not match requested student without leaking internal details', async () => {
+      // Tamper template matric number to a different student
+      db.run("UPDATE face_templates SET matric_number = '2022/299999' WHERE student_id = 'stu-test-01'");
+
+      const capture = generateSyntheticEmbedding('2022/241414');
+      const res = await faceProvider.verifyFace({
+        studentId: 'stu-test-01',
+        matricNumber: '2022/241414',
+        capturedEmbedding: capture,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.statusCode).toBe('ERROR');
+      expect(res.message).toBe(
+        'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.'
+      );
+    });
+
+    it('should ensure repeated facial verification failures never record attendance and preserve retry / fallback', async () => {
+      const impostor1 = generateSyntheticEmbedding('IMPOSTOR_1');
+      const impostor2 = generateSyntheticEmbedding('IMPOSTOR_2');
+
+      const res1 = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: impostor1,
+      });
+      expect(res1.success).toBe(false);
+
+      const res2 = await attendanceService.verifyFaceAndRecord({
+        matricNumber: '2022/241414',
+        sessionId: 'ses-active-01',
+        capturedEmbedding: impostor2,
+      });
+      expect(res2.success).toBe(false);
+
+      // Verify no record exists
+      const record = db.queryOne('SELECT * FROM attendance_records WHERE student_id = ?', ['stu-test-01']);
+      expect(record).toBeNull();
     });
   });
 

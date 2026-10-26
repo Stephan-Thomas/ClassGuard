@@ -62,29 +62,61 @@ export function verifyFace1to1(
   enrolledEmbedding: number[],
   customThreshold: number = DEFAULT_EUCLIDEAN_THRESHOLD
 ): VerificationResult {
-  if (!capturedEmbedding || capturedEmbedding.length !== 128) {
+  const isCapturedValid =
+    Array.isArray(capturedEmbedding) &&
+    capturedEmbedding.length === 128 &&
+    capturedEmbedding.every((v) => typeof v === 'number' && Number.isFinite(v));
+
+  if (!isCapturedValid) {
     return {
       success: false,
       similarityScore: 0,
       threshold: customThreshold,
-      message: 'Invalid captured biometric embedding: expected 128-dimensional vector',
+      message: 'Invalid captured biometric embedding: expected 128 finite numeric values',
     };
   }
 
-  if (!enrolledEmbedding || enrolledEmbedding.length !== 128) {
+  const isEnrolledValid =
+    Array.isArray(enrolledEmbedding) &&
+    enrolledEmbedding.length === 128 &&
+    enrolledEmbedding.every((v) => typeof v === 'number' && Number.isFinite(v));
+
+  if (!isEnrolledValid) {
     return {
       success: false,
       similarityScore: 0,
       threshold: customThreshold,
-      message: 'No valid enrolled biometric template found for this student',
+      message: 'Invalid enrolled biometric template: expected 128 finite numeric values',
+    };
+  }
+
+  // Reject degenerate/uninitialized vectors (norm near zero)
+  let capturedNormSq = 0;
+  for (const v of capturedEmbedding) capturedNormSq += v * v;
+  if (capturedNormSq < 0.01) {
+    return {
+      success: false,
+      similarityScore: 0,
+      threshold: customThreshold,
+      message: 'Degenerate captured facial representation: vector magnitude is near zero',
+    };
+  }
+
+  let enrolledNormSq = 0;
+  for (const v of enrolledEmbedding) enrolledNormSq += v * v;
+  if (enrolledNormSq < 0.01) {
+    return {
+      success: false,
+      similarityScore: 0,
+      threshold: customThreshold,
+      message: 'Degenerate enrolled facial template: vector magnitude is near zero',
     };
   }
 
   const distance = euclideanDistance(capturedEmbedding, enrolledEmbedding);
   const cosSim = cosineSimilarity(capturedEmbedding, enrolledEmbedding);
 
-  const matched = distance <= customThreshold;
-  // Express similarity metric based on normalized distance
+  const matched = Number.isFinite(distance) && distance <= customThreshold;
   const distanceMetric = Number(distance.toFixed(4));
 
   return {
@@ -92,14 +124,39 @@ export function verifyFace1to1(
     similarityScore: distanceMetric,
     threshold: customThreshold,
     message: matched
-      ? `Facial verification succeeded (Euclidean distance: ${distance.toFixed(3)} <= threshold: ${customThreshold})`
-      : `Facial verification failed (Euclidean distance: ${distance.toFixed(3)} > threshold: ${customThreshold})`,
+      ? 'Face verified successfully'
+      : 'Face does not match the enrolled student. Attendance was not recorded.',
     details: {
       euclideanDistance: distance,
       cosineSimilarity: cosSim,
       thresholdUsed: customThreshold,
     },
   };
+}
+
+/**
+ * Translate structured facial verification status codes into user-friendly messages.
+ * Prevents raw distances, thresholds, or technical diagnostics from leaking to students.
+ */
+export function getFriendlyFaceErrorMessage(statusCode?: string): string {
+  switch (statusCode) {
+    case 'FACE_MISMATCH':
+    case 'MISMATCH':
+      return 'Face does not match the enrolled student. Attendance was not recorded.';
+    case 'NO_FACE_DETECTED':
+      return 'No face detected. Please position your face in front of the camera.';
+    case 'MULTIPLE_FACES':
+      return 'Multiple faces detected. Please ensure only the student being verified is visible.';
+    case 'NO_FACE_ENROLLED':
+      return 'No facial profile found for this student. Please contact your lecturer.';
+    case 'CAMERA_UNAVAILABLE':
+    case 'CAMERA_ERROR':
+    case 'VIDEO_NOT_READY':
+      return 'Unable to access the camera. Check camera permissions and try again.';
+    case 'ERROR':
+    default:
+      return 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.';
+  }
 }
 
 /**

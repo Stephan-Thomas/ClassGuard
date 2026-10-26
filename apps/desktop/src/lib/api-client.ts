@@ -132,10 +132,11 @@ const mockBrowserApi: ClassGuardApi = {
     if (idx >= 0) mockStudents.splice(idx, 1);
     return { success: true, message: 'Student deleted' };
   },
-  enrollFace: async (studentId) => {
-    const s = mockStudents.find(x => x.id === studentId);
-    if (s) s.hasFaceEnrolled = true;
-    return { success: true };
+  enrollFace: async () => {
+    return {
+      success: false,
+      message: 'Facial biometric enrollment requires the ClassGuard desktop application connected to local SQLite storage.',
+    };
   },
   deleteFace: async (studentId) => {
     const s = mockStudents.find(x => x.id === studentId);
@@ -226,27 +227,12 @@ const mockBrowserApi: ClassGuardApi = {
     };
     return { success: true, tokenString: JSON.stringify(tokenObject), tokenObject };
   },
-  verifyFaceAndRecord: async (payload) => {
-    const student = mockStudents.find(s => s.matricNumber === payload.matricNumber.trim().toUpperCase());
-    if (!student) {
-      return { success: false, statusCode: 'STUDENT_NOT_FOUND', message: `Student ${payload.matricNumber} not found.` };
-    }
-    const record = {
-      id: `rec-${Date.now()}`,
-      studentId: student.id,
-      matricNumber: student.matricNumber,
-      studentName: student.fullName,
-      courseId: 'crs-002',
-      sessionId: payload.sessionId || 'ses-csc403-active',
-      timestamp: new Date().toISOString(),
-      status: 'PRESENT' as const,
-      verificationMethod: 'FACE_VERIFIED' as const,
-      similarityScore: 0.18,
-      syncStatus: 'PENDING' as const,
-      createdAt: new Date().toISOString(),
+  verifyFaceAndRecord: async () => {
+    return {
+      success: false,
+      statusCode: 'ERROR',
+      message: 'Facial verification is temporarily unavailable. Please try again or use an authorized alternative.',
     };
-    mockRecords.unshift(record);
-    return { success: true, statusCode: 'SUCCESS', message: 'Attendance marked successfully via Facial Verification: PRESENT!', studentName: student.fullName, matricNumber: student.matricNumber, attendanceStatus: 'PRESENT', verificationMethod: 'FACE_VERIFIED', similarityScore: 0.18, record };
   },
   verifyQrFallbackAndRecord: async (payload) => {
     const student = mockStudents[0];
@@ -390,5 +376,11 @@ const mockBrowserApi: ClassGuardApi = {
   toggleFullscreen: async () => ({ isFullScreen: false }),
   isFullscreen: async () => ({ isFullScreen: false }),
 };
+
+if (typeof window !== 'undefined' && !window.classGuardApi) {
+  console.warn(
+    '[ClassGuard API] window.classGuardApi is unavailable. Running in browser preview fallback mode. Facial enrollment and biometric verification are disabled.'
+  );
+}
 
 export const api: ClassGuardApi = typeof window !== 'undefined' && window.classGuardApi ? window.classGuardApi : mockBrowserApi;
