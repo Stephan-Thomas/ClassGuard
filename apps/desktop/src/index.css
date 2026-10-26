@@ -100,3 +100,8 @@
 .animate-radar {
   animation: radar-pulse 3s infinite ease-in-out;
 }
+
+/* Mirrored selfie camera preview for facial scanning alignment */
+.camera-mirror {
+  transform: scaleX(-1);
+}

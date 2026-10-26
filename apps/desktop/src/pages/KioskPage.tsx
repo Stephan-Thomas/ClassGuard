@@ -511,7 +511,7 @@ export const KioskPage: React.FC = () => {
                 autoPlay
                 muted
                 playsInline
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover -scale-x-100 camera-mirror"
               />
 
               {/* Viewfinder Oval Guide */}
